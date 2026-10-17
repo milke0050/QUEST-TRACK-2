@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>용어 퀴즈</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --text: #1d2433;
+    --muted: #6b7489;
+    --line: #dde2ee;
+    --accent: #3b6cf6;
+    --accent-soft: #e7eeff;
+    --good: #1f9d55;
+    --good-soft: #e3f6eb;
+    --bad: #d64545;
+    --bad-soft: #fdeaea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(20, 30, 60, .05);
+  }
+  .hidden { display: none !important; }
+
+  /* Part 고르기 */
+  .parts { display: grid; gap: 12px; }
+  .part-btn {
+    text-align: left;
+    padding: 18px 20px;
+    border: 2px solid var(--line);
+    border-radius: 14px;
+    background: var(--card);
+    font: inherit;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .part-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .part-btn b { display: block; font-size: 1.1rem; }
+  .part-btn span { color: var(--muted); font-size: .92rem; }
+
+  /* 문제 화면 */
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; font-size: .9rem; color: var(--muted); }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-bottom: 20px; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tag { font-size: .8rem; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tag.lv { background: #fff4d6; color: #a06a00; }
+  .question { font-size: 1.15rem; font-weight: 600; margin: 0 0 20px; }
+  .blank { display: inline-block; min-width: 70px; border-bottom: 2px solid var(--accent); margin: 0 4px; }
+
+  .choices { display: grid; gap: 10px; }
+  .choice {
+    display: flex; gap: 10px; align-items: flex-start;
+    text-align: left;
+    width: 100%;
+    padding: 14px 16px;
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+  .choice:hover:not(:disabled) { border-color: var(--accent); }
+  .choice:disabled { cursor: default; }
+  .choice .num { font-weight: 700; color: var(--accent); flex-shrink: 0; }
+  .choice.good { border-color: var(--good); background: var(--good-soft); }
+  .choice.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .choice.picked { border-color: var(--accent); background: var(--accent-soft); }
+
+  .ox { grid-template-columns: 1fr 1fr; }
+  .ox .choice { justify-content: center; font-size: 2.4rem; font-weight: 800; padding: 20px; }
+
+  /* 순서 */
+  .slots { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-height: 48px; padding: 10px; border: 2px dashed var(--line); border-radius: 12px; margin-bottom: 14px; }
+  .slot { padding: 6px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+  .slots .hint { color: var(--muted); font-size: .9rem; }
+
+  /* 짝 맞히기 */
+  .desc-list { margin: 0 0 16px; padding: 12px 16px; background: var(--bg); border-radius: 12px; }
+  .desc-list div { padding: 3px 0; }
+  .pair { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pair:last-child { border-bottom: 0; }
+  .pair label { flex: 1; font-weight: 600; }
+  .pair select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 2px solid var(--line); min-width: 90px; }
+  .pair.good select { border-color: var(--good); background: var(--good-soft); }
+  .pair.bad select { border-color: var(--bad); background: var(--bad-soft); }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .btn {
+    padding: 12px 20px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 2px solid var(--accent); }
+
+  .feedback { margin-top: 20px; padding: 16px; border-radius: 12px; }
+  .feedback.good { background: var(--good-soft); }
+  .feedback.bad { background: var(--bad-soft); }
+  .feedback strong { display: block; font-size: 1.1rem; margin-bottom: 4px; }
+  .feedback.good strong { color: var(--good); }
+  .feedback.bad strong { color: var(--bad); }
+  .feedback p { margin: 4px 0 0; }
+
+  /* 결과 */
+  .score { font-size: 3rem; font-weight: 800; color: var(--accent); margin: 8px 0; }
+  .wrong-list { margin: 16px 0 0; padding-left: 20px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>용어 퀴즈</h1>
+  <p class="sub">Git · AI · 부탁하기 용어를 확인해 봐요.</p>
+
+  <!-- 1. Part 고르기 -->
+  <section id="start" class="card">
+    <p style="margin-top:0">풀어 볼 Part 를 골라 주세요.</p>
+    <div class="parts" id="parts"></div>
+  </section>
+
+  <!-- 2. 문제 -->
+  <section id="quiz" class="card hidden">
+    <div class="top"><span id="partName"></span><span id="progress"></span></div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="tags" id="tags"></div>
+    <p class="question" id="question"></p>
+    <div id="answerArea"></div>
+    <div id="feedback"></div>
+  </section>
+
+  <!-- 3. 결과 -->
+  <section id="result" class="card hidden">
+    <p style="margin:0" id="resultPart"></p>
+    <div class="score" id="score"></div>
+    <p id="scoreMsg" style="margin:0"></p>
+    <ul class="wrong-list" id="wrongList"></ul>
+    <div class="row">
+      <button class="btn" id="retryBtn">다시 풀기</button>
+      <button class="btn ghost" id="homeBtn">다른 Part 고르기</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// 유형: mc(보기 4개 중 하나) · ox · order(순서) · match(짝 맞히기)
+// mc 의 ans 는 정답 보기 번호(1~4)
+const PARTS = [
+  {
+    name: 'Part 1 · Git · GitHub · Pages',
+    questions: [
+      { n: 1, type: 'mc', label: '4지선다', lv: 1, q: '고칠 때마다 저장 지점을 찍어 두는, 파일의 세이브 포인트 같은 프로그램은?', opts: ['Python', 'Orca', 'Git', 'Node.js'], ans: 3, exp: 'Git 은 저장 지점을 찍어 두고, 망가지면 잘 되던 지점으로 돌아가게 해 줍니다.' },
+      { n: 2, type: 'mc', label: '빈칸', lv: 1, q: 'Git 이 지켜보는 폴더를 (    )(이)라고 합니다.', opts: ['저장소', '휴지통', '바탕화면', '토큰'], ans: 1, exp: '저장소는 영어로 repository, 줄여서 repo 라고 합니다.' },
+      { n: 3, type: 'ox', label: 'OX', lv: 2, q: '저장소 안에 숨어 있는 .git 폴더가 Git 의 기록장이다.', ans: 'O', exp: '저장 지점(커밋)이 모두 .git 폴더 안에 기록됩니다.' },
+      { n: 4, type: 'mc', label: '4지선다', lv: 1, q: '바뀐 것을 묶어 저장 지점 하나로 남기는 일은?', opts: ['클론', '풀', '푸시', '커밋'], ans: 4, exp: '"커밋해 줘" 하면 쌓인 변경을 묶어 기록장에 점 하나로 남깁니다.' },
+      { n: 5, type: 'mc', label: '4지선다', lv: 2, q: '커밋 메시지(이름표)로 가장 좋은 것은?', opts: ['ㅇㅇ', '점수 표시 추가', '1', '수정'], ans: 2, exp: '무엇을 바꿨는지 한 줄로 적어야 나중에 이름표만 보고 그때를 찾습니다.' },
+      { n: 6, type: 'ox', label: 'OX', lv: 2, q: 'Ctrl+S 로 저장만 해 두어도 예전 모습으로 돌아갈 수 있는 점이 생긴다.', ans: 'X', exp: '저장은 지금 모습으로 덮어쓰기, 돌아갈 점은 커밋해야 남습니다.' },
+      { n: 7, type: 'mc', label: '4지선다', lv: 2, q: '두 커밋을 비교했을 때 빨간색 − 줄은 무엇일까?', opts: ['들어온 줄', '빠진 줄', '그대로인 줄', '오류가 난 줄'], ans: 2, exp: '빨강 − 는 빠진 줄, 초록 + 는 들어온 줄입니다.' },
+      { n: 8, type: 'mc', label: '빈칸', lv: 2, q: '두 커밋의 차이, 즉 바뀐 줄을 영어로 (    )(이)라고 합니다.', opts: ['push', 'token', 'repo', 'diff'], ans: 4, exp: 'diff 는 차이(difference)를 줄인 말입니다.' },
+      { n: 9, type: 'match', label: '짝 맞히기', lv: 2, q: '용어와 설명을 짝 지어 봅니다.',
+        terms: ['로컬', '원격', 'Git', 'GitHub'],
+        descs: { '가': '인터넷에 있는 저장소', '나': '내 컴퓨터에 있는 저장소', '다': '저장소를 인터넷에 보관해 주는 사이트', '라': '내 컴퓨터에서 바뀐 것을 커밋으로 기록하는 프로그램' },
+        ans: ['나', '가', '라', '다'], exp: 'Git 은 프로그램, GitHub 는 보관소입니다. 같은 저장소가 로컬과 원격 두 곳에 있습니다.' },
+      { n: 10, type: 'mc', label: '4지선다', lv: 1, q: '내 컴퓨터의 커밋을 GitHub 로 올려 보내는 일은?', opts: ['푸시', '새로 고침', '풀', '커밋'], ans: 1, exp: '푸시는 파일 하나가 아니라 저장 지점 묶음을 올립니다.' },
+      { n: 11, type: 'ox', label: 'OX', lv: 2, q: '커밋을 하나도 하지 않았어도 푸시하면 바뀐 파일이 GitHub 로 올라간다.', ans: 'X', exp: '푸시는 커밋을 올리는 일이라, 커밋이 없으면 올릴 것도 없습니다.' },
+      { n: 12, type: 'mc', label: '4지선다', lv: 2, q: 'GitHub 에 있는 저장소를 내 컴퓨터로 처음 통째로 받아 오는 일은?', opts: ['풀', '푸시', '클론', '커밋'], ans: 3, exp: '처음 한 번은 클론, 이미 있으면 풀로 새 커밋만 받습니다.' },
+      { n: 13, type: 'mc', label: '상황', lv: 3, q: '집 컴퓨터에 이미 저장소가 있다. 학원에서 올린 새 커밋만 받아 오고 싶을 때 하는 부탁은?', opts: ['"다시 푸시해 줘"', '"저장소를 클론해 줘"', '"GitHub 의 새 커밋을 풀 해 줘"', '"지금 상태를 커밋해 줘"'], ans: 3, exp: '이미 저장소가 있으면 통째로 받지 않고 풀로 새 커밋만 받습니다.' },
+      { n: 14, type: 'mc', label: '4지선다', lv: 1, q: '저장소의 HTML 을 인터넷 주소로 누구나 볼 수 있게 해 주는 무료 전시장은?', opts: ['GitHub Pages', '커밋', '컨텍스트', '토큰'], ans: 1, exp: 'GitHub Pages 는 저장소의 HTML 을 인터넷 주소로 보여 줍니다.' },
+      { n: 15, type: 'mc', label: '빈칸', lv: 3, q: '주소 my-id.github.io/QUEST-TRACK-2/week-02/ 에서 QUEST-TRACK-2 는 (    ) 이름입니다.', opts: ['GitHub 아이디', '폴더', '모델', '저장소'], ans: 4, exp: 'my-id 는 GitHub 아이디, QUEST-TRACK-2 는 저장소, week-02 는 폴더입니다.' },
+      { n: 16, type: 'order', label: '순서', lv: 3, q: '고친 게임을 친구가 주소로 보기까지, 일어나는 순서대로 놓아 봅니다.',
+        items: { A: '파일 고치기', B: '푸시', C: '커밋', D: '1~2분 뒤 Pages 반영' },
+        ans: ['A', 'C', 'B', 'D'], exp: '고치고, 커밋해서 남기고, 푸시로 올리면 Pages 가 1~2분 뒤 새 모습을 보여 줍니다.' },
+      { n: 17, type: 'ox', label: 'OX', lv: 2, q: '푸시하자마자 새로 고침했는데 옛 모습이 보이면 페이지가 망가진 것이다.', ans: 'X', exp: 'Pages 가 페이지를 다시 만드는 1~2분 동안은 옛 모습이 보입니다. 기다렸다가 F5 를 누릅니다.' },
+      { n: 18, type: 'mc', label: '4지선다', lv: 3, q: '친구가 내 컴퓨터 안 파일 주소(file:///C:/...)를 입력해도 게임이 열리지 않는 까닭은?', opts: ['커밋 메시지가 짧아서', '친구 컴퓨터에는 그 파일이 없어서', '인터넷이 느려서', '파일 이름이 영어라서'], ans: 2, exp: '그래서 늘 켜져 있는 서버에 두고, 누구나 인터넷 주소로 찾아오게 합니다.' }
+    ]
+  },
+  {
+    name: 'Part 2 · AI 를 이해하는 말',
+    questions: [
+      { n: 19, type: 'mc', label: '4지선다', lv: 1, q: 'LLM 은 무엇의 줄임말일까?', opts: ['Large Language Model', 'Long Line Maker', 'Local Link Manager', 'Light Learning Machine'], ans: 1, exp: '엄청 많은 글을 읽고(Large) 사람의 말을 다루는(Language) 프로그램(Model)입니다.' },
+      { n: 20, type: 'ox', label: 'OX', lv: 2, q: 'AI 는 검색처럼 이미 있는 글을 찾아 그대로 보여 준다.', ans: 'X', exp: 'AI 는 새 문장을 한 조각씩 이어 씁니다. 그래서 답이 매번 조금씩 다릅니다.' },
+      { n: 21, type: 'mc', label: '빈칸', lv: 2, q: 'LLM 은 수많은 글에서 (    ) 말을 가리고 맞혀 보는 연습으로 배웁니다.', opts: ['영어', '다음', '맨 처음', '가장 긴'], ans: 2, exp: '가린 다음 말을 맞혀 보고 정답과 비교하는 연습을 셀 수 없이 반복합니다.' },
+      { n: 22, type: 'order', label: '순서', lv: 2, q: 'AI 가 답을 만드는 순서대로 놓아 봅니다.',
+        items: { A: '그중 그럴듯한 말을 골라 붙인다', B: '지금까지의 글을 본다', C: '다음 말 후보를 떠올린다', D: '답이 끝날 때까지 반복한다' },
+        ans: ['B', 'C', 'A', 'D'], exp: '지금까지 글을 보고 후보를 떠올린 뒤, 그럴듯한 말을 골라 붙이기를 반복합니다.' },
+      { n: 23, type: 'mc', label: '4지선다', lv: 1, q: '모르는 것도 그럴듯하게 지어낸 틀린 말을 무엇이라고 할까?', opts: ['컨텍스트', '커밋', '클론', '할루시네이션'], ans: 4, exp: 'LLM 은 모르는 것도 그럴듯하게 이어 쓸 때가 있습니다.' },
+      { n: 24, type: 'mc', label: '상황', lv: 3, q: 'AI 가 "퀴즈를 다 만들었습니다" 라고 했다. 할루시네이션을 막으려면?', opts: ['결과를 직접 열어 정답을 확인한다', '같은 부탁을 열 번 보낸다', '바로 /clear 한다', '그냥 믿고 친구에게 보낸다'], ans: 1, exp: '다 됐다는 말만 믿지 않고, 결과를 직접 열어 내 눈으로 확인합니다.' },
+      { n: 25, type: 'mc', label: '4지선다', lv: 1, q: 'AI 가 글을 읽을 때 잘게 나누는 조각의 이름은?', opts: ['폴더', '픽셀', '토큰', '커밋'], ans: 3, exp: 'AI 는 글을 토큰이라는 조각으로 나누고, 다음 말 맞히기도 한 토큰씩 합니다.' },
+      { n: 26, type: 'ox', label: 'OX', lv: 2, q: '글자 수와 토큰(조각) 수는 언제나 똑같다.', ans: 'X', exp: '한글은 1~2글자, 영어는 단어나 단어 조각이 한 토큰이라 글자 수와 다릅니다.' },
+      { n: 27, type: 'mc', label: '4지선다', lv: 3, q: '토큰 수와 관계가 없는 것은?', opts: ['AI 를 쓰는 비용', '답하는 데 걸리는 시간', '내 GitHub 아이디', 'AI 가 한 번에 볼 수 있는 양'], ans: 3, exp: '볼 수 있는 양, 비용, 시간은 모두 토큰으로 셉니다.' },
+      { n: 28, type: 'mc', label: '빈칸', lv: 1, q: 'AI 가 지금 펼쳐 놓고 보고 있는 책상 전부를 (    )(이)라고 합니다.', opts: ['컨텍스트', '저장소', '모델', 'diff'], ans: 1, exp: '대화, 읽은 파일, CLAUDE.md 가 책상(컨텍스트)에 올라갑니다.' },
+      { n: 29, type: 'mc', label: '4지선다', lv: 2, q: 'Claude Code 하단 정보줄의 ① 막대가 보여 주는 것은?', opts: ['커밋 개수', '인터넷 속도', '지금 쓰는 모델', '책상(컨텍스트)이 찬 정도'], ans: 4, exp: '① 막대는 컨텍스트, ② 칸은 모델입니다.' },
+      { n: 30, type: 'ox', label: 'OX', lv: 3, q: '책상이 가득 차면 지난 대화를 지우지 않고 요약본으로 접는다.', ans: 'O', exp: '요약본은 짧아서 세부가 흐려질 수 있습니다.' },
+      { n: 31, type: 'mc', label: '상황', lv: 2, q: '다른 새 작업을 시작하기 전에 책상을 비우는 명령은?', opts: ['/quiz', '/clear', '/push', '/save'], ans: 2, exp: '/clear 는 새 작업 전에 책상(컨텍스트)을 비웁니다.' },
+      { n: 32, type: 'mc', label: '4지선다', lv: 3, q: '/clear 를 해도 규칙과 목표가 남아 있는 까닭은?', opts: ['Pages 에 올려 두어서', '매번 다시 읽히는 CLAUDE.md 에 적어 두어서', '커밋을 해 두어서', '토큰이 많아서'], ans: 2, exp: 'CLAUDE.md 는 새 대화의 첫 부탁보다 먼저 다시 읽히는 메모입니다.' },
+      { n: 33, type: 'match', label: '짝 맞히기', lv: 2, q: 'Claude 모델 4형제와 설명을 짝 지어 봅니다.',
+        terms: ['Fable', 'Opus', 'Sonnet', 'Haiku'],
+        descs: { '가': '빠르고 균형 잡힌 모델', '나': '가장 빠르고 가벼운 모델', '다': '가장 똑똑하고 가장 비싼 모델', '라': '깊게 생각하는 강한 모델(우리 수업)' },
+        ans: ['다', '라', '가', '나'], exp: '똑똑할수록 느리고 비쌉니다. 우리 수업은 Opus 하나를 씁니다.' },
+      { n: 34, type: 'mc', label: '4지선다', lv: 1, q: '하단 정보줄 ② 칸에 보이는, 우리 수업에서 쓰는 모델은?', opts: ['Fable', 'Opus', 'Sonnet', 'Haiku'], ans: 2, exp: '수업에서는 Opus 하나를 씁니다.' },
+      { n: 35, type: 'ox', label: 'OX', lv: 1, q: 'Claude 도 LLM 의 하나다.', ans: 'O', exp: 'Claude 처럼 엄청 많은 글을 읽고 말을 다루는 AI 를 LLM 이라고 부릅니다.' },
+      { n: 36, type: 'mc', label: '상황', lv: 2, q: 'AI 에게 같은 질문을 다시 했더니 이번엔 다른 이름을 지어 줬다. 왜일까?', opts: ['인터넷이 끊겨서', '커밋을 안 해서', 'AI 가 고장 나서', '다음 말을 매번 새로 골라 이어 쓰기 때문에'], ans: 4, exp: 'AI 는 검색처럼 같은 글을 찾지 않고, 매번 새 문장을 한 조각씩 만듭니다.' }
+    ]
+  },
+  {
+    name: 'Part 3 · 찾아서 고치는 부탁',
+    questions: [
+      { n: 37, type: 'mc', label: '4지선다', lv: 1, q: 'Claude Code 에게 "재생 버튼 색만 초록으로 바꿔 줘" 라고 하면?', opts: ['그 부분을 찾아 그 부분만 고친다', '아무것도 하지 않는다', '새 파일을 만든다', '파일 전체를 처음부터 다시 쓴다'], ans: 1, exp: '파일을 직접 열어 읽고, 고칠 줄을 찾아 그 줄만 바꿉니다.' },
+      { n: 38, type: 'order', label: '순서', lv: 2, q: 'Claude Code 가 고치는 4단계를 순서대로 놓아 봅니다.',
+        items: { A: '파일 찾아 읽기', B: '그 부분만 수정하기', C: '부탁 이해하기', D: '고칠 곳 정하기' },
+        ans: ['C', 'A', 'D', 'B'], exp: '먼저 읽고, 찾고, 그다음 고칩니다.' },
+      { n: 39, type: 'ox', label: 'OX', lv: 2, q: '파일 전체를 통째로 다시 쓰면 잘 되던 곳까지 바뀔 수 있다.', ans: 'O', exp: 'TRACK 1 에서 재생 버튼만 바꾸려다 볼륨 칸이 사라진 것처럼, 통째로 다시 쓰면 다른 곳도 바뀝니다.' },
+      { n: 40, type: 'mc', label: '4지선다', lv: 2, q: '그 부분만 고칠 때 좋은 점이 아닌 것은?', opts: ['잘 되던 곳이 망가지지 않는다', '바뀐 줄로 확인할 수 있다', '파일이 저절로 Pages 에 올라간다', '빠르다'], ans: 3, exp: 'Pages 에 올리려면 커밋하고 푸시해야 합니다.' },
+      { n: 41, type: 'mc', label: '상황', lv: 2, q: '"색 바꿔 줘" 라고만 부탁하면 어떤 일이 생길까?', opts: ['저절로 커밋된다', '파일이 지워진다', '색이 들어간 줄이 많아 AI 가 어디인지 헷갈린다', '정확히 한 줄만 바로 바뀐다'], ans: 3, exp: '모호하면 후보가 많아집니다. 어디를 바꿀지 말해 줍니다.' },
+      { n: 42, type: 'mc', label: '빈칸', lv: 1, q: '또렷한 부탁에는 어디 · 무엇 · (    )이(가) 들어갑니다.', opts: ['어떻게', '언제', '누가', '왜'], ans: 1, exp: '예: 재생 버튼(어디) 색(무엇)을 초록으로(어떻게).' },
+      { n: 43, type: 'mc', label: '부탁 고치기', lv: 2, q: '"색 바꿔 줘" 를 바르게 고친 부탁은?', opts: ['"전부 다시 만들어 줘"', '"아무 색이나 바꿔 줘"', '"색 좀 예쁘게 해 줘"', '"재생 버튼 색을 초록으로 바꿔 줘"'], ans: 4, exp: '어디(재생 버튼) · 무엇(색) · 어떻게(초록으로)가 모두 들어 있습니다.' },
+      { n: 44, type: 'mc', label: '부탁 고치기', lv: 3, q: '"그거 좀 크게 해 줘" 를 바르게 고친 부탁은?', opts: ['"그거 진짜 크게 해 줘"', '"곡 제목 글자 크기를 두 배로 키워 줘"', '"다 크게 해 줘"', '"처음부터 다시 만들어 줘"'], ans: 2, exp: '"그거" 대신 어디를, "크게" 대신 얼마나를 말합니다.' },
+      { n: 45, type: 'mc', label: '상황', lv: 3, q: 'Claude Code 가 고친 뒤 무엇이 바뀌었는지 확인하려면 어디를 보면 될까?', opts: ['토큰 수', '빨강 · 초록으로 보이는 바뀐 줄', '하단 정보줄 ② 칸', '내 GitHub 아이디'], ans: 2, exp: '빨강 − 는 빠진 줄, 초록 + 는 들어온 줄입니다.' },
+      { n: 46, type: 'match', label: '짝 맞히기', lv: 3, q: '평소에 하는 말과, 용어로 바꾼 부탁을 짝 지어 봅니다.',
+        terms: ['이거 남겨 둬', '인터넷에 올려', '다시 가져와', '책상 좀 비워'],
+        descs: { '가': '"week-02 를 푸시해 줘"', '나': '"GitHub 의 새 커밋을 풀 해 줘"', '다': '"week-02 를 커밋해 줘"', '라': '/clear 입력하기' },
+        ans: ['다', '가', '나', '라'], exp: '용어로 말하면 AI 가 되묻지 않고 한 번에 알아듣습니다.' },
+      { n: 47, type: 'ox', label: 'OX', lv: 1, q: '부탁 끝에 "나머지는 그대로 둬" 를 붙이면 고칠 곳이 아닌 곳은 건드리지 말라는 뜻이 된다.', ans: 'O', exp: '그 부분만 고치라는 뜻이 더 분명해집니다.' },
+      { n: 48, type: 'mc', label: '빈칸', lv: 2, q: '"재생 버튼 색을 초록으로 바꿔 줘" 에서 재생 버튼은 어디 · 무엇 · 어떻게 중 (    )입니다.', opts: ['무엇', '어떻게', '언제', '어디'], ans: 4, exp: '재생 버튼(어디) 색(무엇)을 초록으로(어떻게).' },
+      { n: 49, type: 'mc', label: '부탁 고치기', lv: 2, q: '"글자 좀 바꿔 줘" 를 바르게 고친 부탁은?', opts: ['"곡 제목을 우주 산책 (라이브) 로 바꿔 줘"', '"아무 글자나 바꿔 줘"', '"처음부터 다시 써 줘"', '"글자 다 바꿔 줘"'], ans: 1, exp: '어디(곡 제목)와 어떻게(무엇으로 바꿀지)를 함께 말합니다.' },
+      { n: 50, type: 'order', label: '순서', lv: 3, q: '고친 결과를 친구에게 보여 주기까지 순서대로 놓아 봅니다.',
+        items: { A: '바뀐 줄 확인하기', B: '커밋하고 푸시하기', C: '그 부분만 고쳐 달라고 부탁하기', D: 'Pages 주소로 열어 보기' },
+        ans: ['C', 'A', 'B', 'D'], exp: '부탁하고, 바뀐 줄을 확인한 뒤, 커밋 · 푸시하면 Pages 주소로 새 모습을 봅니다.' }
+    ]
+  }
+];
+
+const NUMS = ['①', '②', '③', '④'];
+const LEVELS = { 1: '★ 쉬움', 2: '★★ 보통', 3: '★★★ 어려움' };
+const $ = id => document.getElementById(id);
+
+let part = null;     // 지금 푸는 Part
+let index = 0;       // 지금 문제 번호(0부터)
+let correct = 0;     // 맞힌 개수
+let wrong = [];      // 틀린 문제
+
+// 화면 바꾸기
+function show(id) {
+  ['start', 'quiz', 'result'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+  window.scrollTo(0, 0);
+}
+
+// 글자를 안전하게 넣기
+function esc(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// 1. Part 고르기 버튼 만들기
+PARTS.forEach((p, i) => {
+  const b = document.createElement('button');
+  b.className = 'part-btn';
+  b.innerHTML = `<b>${esc(p.name)}</b><span>${p.questions.length}문제 · Q${p.questions[0].n} ~ Q${p.questions[p.questions.length - 1].n}</span>`;
+  b.onclick = () => startPart(i);
+  $('parts').appendChild(b);
+});
+
+function startPart(i) {
+  part = PARTS[i];
+  index = 0;
+  correct = 0;
+  wrong = [];
+  show('quiz');
+  renderQuestion();
+}
+
+// 2. 문제 보여 주기
+function renderQuestion() {
+  const q = part.questions[index];
+  const total = part.questions.length;
+  $('partName').textContent = part.name;
+  $('progress').textContent = `${index + 1} / ${total}`;
+  $('barFill').style.width = (index / total * 100) + '%';
+  $('tags').innerHTML = `<span class="tag">Q${q.n} · ${esc(q.label)}</span><span class="tag lv">${LEVELS[q.lv]}</span>`;
+  $('question').innerHTML = esc(q.q).replace('(    )', '<span class="blank"></span>');
+  $('feedback').innerHTML = '';
+
+  const area = $('answerArea');
+  area.innerHTML = '';
+  if (q.type === 'mc') renderMC(q, area);
+  else if (q.type === 'ox') renderOX(q, area);
+  else if (q.type === 'order') renderOrder(q, area);
+  else if (q.type === 'match') renderMatch(q, area);
+}
+
+// 보기 4개 중 하나 (4지선다 · 빈칸 · 상황 · 부탁 고치기)
+function renderMC(q, area) {
+  const box = document.createElement('div');
+  box.className = 'choices';
+  q.opts.forEach((opt, i) => {
+    const b = document.createElement('button');
+    b.className = 'choice';
+    b.innerHTML = `<span class="num">${NUMS[i]}</span><span>${esc(opt)}</span>`;
+    b.onclick = () => {
+      const ok = (i + 1) === q.ans;
+      box.querySelectorAll('.choice').forEach((c, j) => {
+        c.disabled = true;
+        if (j + 1 === q.ans) c.classList.add('good');
+      });
+      if (!ok) b.classList.add('bad');
+      finish(q, ok, `${NUMS[q.ans - 1]} ${q.opts[q.ans - 1]}`);
+    };
+    box.appendChild(b);
+  });
+  area.appendChild(box);
+}
+
+// OX
+function renderOX(q, area) {
+  const box = document.createElement('div');
+  box.className = 'choices ox';
+  ['O', 'X'].forEach(v => {
+    const b = document.createElement('button');
+    b.className = 'choice';
+    b.textContent = v;
+    b.onclick = () => {
+      const ok = v === q.ans;
+      box.querySelectorAll('.choice').forEach(c => {
+        c.disabled = true;
+        if (c.textContent === q.ans) c.classList.add('good');
+      });
+      if (!ok) b.classList.add('bad');
+      finish(q, ok, q.ans);
+    };
+    box.appendChild(b);
+  });
+  area.appendChild(box);
+}
+
+// 순서: 보기를 차례로 눌러 줄 세우기
+function renderOrder(q, area) {
+  const picked = [];
+  const slots = document.createElement('div');
+  slots.className = 'slots';
+  const box = document.createElement('div');
+  box.className = 'choices';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const submit = document.createElement('button');
+  submit.className = 'btn';
+  submit.textContent = '제출하기';
+  submit.disabled = true;
+  const reset = document.createElement('button');
+  reset.className = 'btn ghost';
+  reset.textContent = '처음부터 다시 놓기';
+
+  function drawSlots() {
+    slots.innerHTML = picked.length
+      ? picked.map(k => `<span class="slot">${k}</span>`).join('<span>→</span>')
+      : '<span class="hint">먼저 일어나는 것부터 차례로 눌러 주세요.</span>';
+    submit.disabled = picked.length !== 4;
+  }
+
+  Object.keys(q.items).forEach(k => {
+    const b = document.createElement('button');
+    b.className = 'choice';
+    b.innerHTML = `<span class="num">${k}</span><span>${esc(q.items[k])}</span>`;
+    b.onclick = () => {
+      picked.push(k);
+      b.disabled = true;
+      b.classList.add('picked');
+      drawSlots();
+    };
+    box.appendChild(b);
+  });
+
+  reset.onclick = () => {
+    picked.length = 0;
+    box.querySelectorAll('.choice').forEach(c => { c.disabled = false; c.classList.remove('picked'); });
+    drawSlots();
+  };
+
+  submit.onclick = () => {
+    const ok = picked.join('') === q.ans.join('');
+    submit.disabled = true;
+    reset.disabled = true;
+    box.querySelectorAll('.choice').forEach(c => c.disabled = true);
+    slots.style.borderColor = ok ? 'var(--good)' : 'var(--bad)';
+    finish(q, ok, q.ans.join(' → '));
+  };
+
+  drawSlots();
+  row.append(submit, reset);
+  area.append(slots, box, row);
+}
+
+// 짝 맞히기: 용어마다 설명(가~라)을 고르기
+function renderMatch(q, area) {
+  const list = document.createElement('div');
+  list.className = 'desc-list';
+  list.innerHTML = Object.keys(q.descs).map(k => `<div><b>${k}</b> ${esc(q.descs[k])}</div>`).join('');
+
+  const pairs = document.createElement('div');
+  const selects = [];
+  const submit = document.createElement('button');
+  submit.className = 'btn';
+  submit.textContent = '제출하기';
+  submit.disabled = true;
+
+  q.terms.forEach((t, i) => {
+    const p = document.createElement('div');
+    p.className = 'pair';
+    const sel = document.createElement('select');
+    sel.innerHTML = '<option value="">고르기</option>' + Object.keys(q.descs).map(k => `<option value="${k}">${k}</option>`).join('');
+    sel.onchange = () => { submit.disabled = selects.some(s => !s.value); };
+    selects.push(sel);
+    const label = document.createElement('label');
+    label.textContent = `${i + 1} ${t}`;
+    p.append(label, sel);
+    pairs.appendChild(p);
+  });
+
+  submit.onclick = () => {
+    let ok = true;
+    selects.forEach((s, i) => {
+      s.disabled = true;
+      const right = s.value === q.ans[i];
+      if (!right) ok = false;
+      s.parentElement.classList.add(right ? 'good' : 'bad');
+    });
+    submit.disabled = true;
+    finish(q, ok, q.ans.map((a, i) => `${i + 1}-${a}`).join(' · '));
+  };
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.appendChild(submit);
+  area.append(list, pairs, row);
+}
+
+// 답한 뒤: 맞았는지 + 한 줄 해설 + 다음 버튼
+function finish(q, ok, answerText) {
+  if (ok) correct++;
+  else wrong.push(q);
+  const last = index === part.questions.length - 1;
+  $('feedback').innerHTML = `
+    <div class="feedback ${ok ? 'good' : 'bad'}">
+      <strong>${ok ? '⭕ 맞았어요!' : '❌ 아쉬워요'}</strong>
+      <p>정답: <b>${esc(answerText)}</b></p>
+      <p>${esc(q.exp)}</p>
+    </div>
+    <div class="row"><button class="btn" id="nextBtn">${last ? '점수 보기' : '다음 문제'}</button></div>`;
+  $('nextBtn').onclick = () => {
+    if (last) showResult();
+    else { index++; renderQuestion(); }
+  };
+  $('nextBtn').focus();
+}
+
+// 3. 결과
+function showResult() {
+  const total = part.questions.length;
+  $('resultPart').textContent = part.name;
+  $('score').textContent = `${correct} / ${total}`;
+  const rate = correct / total;
+  $('scoreMsg').textContent = rate === 1 ? '모두 맞혔어요!' : rate >= 0.7 ? '잘했어요! 틀린 문제만 다시 볼까요?' : '틀린 문제를 다시 풀어 봐요.';
+  $('wrongList').innerHTML = wrong.map(q => `<li>Q${q.n} · ${esc(q.q)}</li>`).join('');
+  show('result');
+}
+
+$('retryBtn').onclick = () => startPart(PARTS.indexOf(part));
+$('homeBtn').onclick = () => show('start');
+</script>
+</body>
+</html>
