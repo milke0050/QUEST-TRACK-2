@@ -769,6 +769,7 @@ function endMini() {
   $('ritual').classList.add('hidden');
   $('miniInput').classList.add('hidden');
   $('miniInput').blur();
+  for (const k in keys) keys[k] = false; // 입력 창에 있던 동안 눌린 키가 남지 않게
 }
 
 // ---------- 규칙 1: 눈 가리고 10초 세기 ----------
@@ -1239,14 +1240,35 @@ function openNotes() {
 
 // ===================== 입력 =====================
 const BLOCK_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+// 한글 입력 상태에서도 키가 먹히도록: ㅇ→D, ㅈ→W …
+const HANGUL_KEYS = {
+  'ㅈ': 'KeyW', 'ㅉ': 'KeyW', 'ㅁ': 'KeyA', 'ㄴ': 'KeyS', 'ㅇ': 'KeyD', 'ㄷ': 'KeyE', 'ㄸ': 'KeyE',
+  'ㅂ': 'KeyQ', 'ㅃ': 'KeyQ', 'ㅡ': 'KeyM', 'ㅜ': 'KeyN', 'ㅗ': 'KeyH'
+};
+const OLD_KEYS = { 13: 'Enter', 27: 'Escape', 32: 'Space', 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown' };
+function keyOf(e) {
+  if (HANGUL_KEYS[e.key]) return HANGUL_KEYS[e.key];
+  if (e.code && e.code !== 'Unidentified') return e.code;
+  const k = e.keyCode;
+  if (k >= 65 && k <= 90) return 'Key' + String.fromCharCode(k);
+  return OLD_KEYS[k] || '';
+}
+let imeWarned = false;
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return; // 외치기 입력 중
-  if (BLOCK_KEYS.includes(e.code)) e.preventDefault();
-  const first = !keys[e.code];
-  keys[e.code] = true;
-  if (first) onPress(e.code);
+  const code = keyOf(e);
+  if (!code) return;
+  if (BLOCK_KEYS.includes(code)) e.preventDefault();
+  // 한글 모드로 누르고 있으면 한 번 알려 주기
+  if (!imeWarned && mode === 'play' && (e.key === 'Process' || HANGUL_KEYS[e.key])) {
+    imeWarned = true;
+    say('(한/영 키를 눌러 영문 입력으로 바꾸면 조작이 더 매끄러워요.)', 4);
+  }
+  const first = !keys[code];
+  keys[code] = true;
+  if (first) onPress(code);
 });
-addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('keyup', e => { const code = keyOf(e); if (code) keys[code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 function onPress(k) {
