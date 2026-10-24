@@ -3,7 +3,8 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from pynput import keyboard
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -13,6 +14,23 @@ ART = BASE / "art"
 
 SIZE = 150    # 펫 그림이 들어갈 네모 크기 (px)
 MARGIN = 16   # 화면 가장자리와 띄울 거리 (px)
+
+
+class KeyCounter(QObject):
+    """키가 눌렸다는 사실만 알려 준다. 어떤 키인지는 받자마자 버리고 어디에도 남기지 않는다."""
+
+    pressed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        # pynput 은 다른 줄(스레드)에서 돌아서, 신호로 펫 창에 알린다.
+        self.listener = keyboard.Listener(on_press=lambda _key: self.pressed.emit())
+
+    def start(self):
+        self.listener.start()
+
+    def stop(self):
+        self.listener.stop()
 
 
 class Pet(QWidget):
@@ -35,14 +53,36 @@ class Pet(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.picture)
 
+        # 펫 아래 "오늘 N타" (프로그램을 끄면 0부터 다시)
+        self.count = 0
+        self.counter_label = QLabel(alignment=Qt.AlignCenter)
+        self.counter_label.setFixedWidth(SIZE)
+        self.counter_label.setStyleSheet(
+            "color: white; background: rgba(30, 30, 40, 180);"
+            "border-radius: 9px; padding: 2px 8px; font-size: 12px; font-weight: bold;"
+        )
+        layout.addWidget(self.counter_label)
+        self.update_count_label()
+
         self.show_pose("rest")
         self.adjustSize()
         self.move_to_corner()
 
         self.drag_from = None
+        self.next_typing_pose = "type1"
 
     def show_pose(self, name):
         self.picture.setPixmap(self.poses[name])
+
+    def on_key(self):
+        # 누를 때마다 타자 ① ↔ ② 번갈아
+        self.count += 1
+        self.update_count_label()
+        self.show_pose(self.next_typing_pose)
+        self.next_typing_pose = "type2" if self.next_typing_pose == "type1" else "type1"
+
+    def update_count_label(self):
+        self.counter_label.setText(f"오늘 {self.count:,}타")
 
     def move_to_corner(self):
         # availableGeometry 는 작업 표시줄을 뺀 화면이라, 작업 표시줄 바로 위에 놓인다.
@@ -72,4 +112,9 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     pet = Pet()
     pet.show()
-    sys.exit(app.exec())
+    keys = KeyCounter()
+    keys.pressed.connect(pet.on_key)
+    keys.start()
+    code = app.exec()
+    keys.stop()
+    sys.exit(code)
