@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from pynput import keyboard
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -14,6 +14,8 @@ ART = BASE / "art"
 
 SIZE = 150    # 펫 그림이 들어갈 네모 크기 (px)
 MARGIN = 16   # 화면 가장자리와 띄울 거리 (px)
+REST_AFTER = 1_000    # 키를 이만큼 안 누르면 쉬기 (ms)
+SLEEP_AFTER = 30_000  # 키를 이만큼 안 누르면 자기 (ms)
 
 
 class KeyCounter(QObject):
@@ -71,6 +73,16 @@ class Pet(QWidget):
         self.drag_from = None
         self.next_typing_pose = "type1"
 
+        # 마지막으로 누른 때부터 시간을 잰다. 키를 누를 때마다 처음부터 다시 잰다.
+        self.rest_timer = self.make_timer(REST_AFTER, lambda: self.show_pose("rest"))
+        self.sleep_timer = self.make_timer(SLEEP_AFTER, lambda: self.show_pose("sleep"))
+        self.sleep_timer.start()  # 켜 놓고 30초 동안 안 치면 잔다
+
+    def make_timer(self, ms, action):
+        timer = QTimer(self, singleShot=True, interval=ms)
+        timer.timeout.connect(action)
+        return timer
+
     def show_pose(self, name):
         self.picture.setPixmap(self.poses[name])
 
@@ -80,6 +92,8 @@ class Pet(QWidget):
         self.update_count_label()
         self.show_pose(self.next_typing_pose)
         self.next_typing_pose = "type2" if self.next_typing_pose == "type1" else "type1"
+        self.rest_timer.start()
+        self.sleep_timer.start()
 
     def update_count_label(self):
         self.counter_label.setText(f"오늘 {self.count:,}타")
