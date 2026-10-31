@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>딸기 모으기 · 연습 게임</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1f2b; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas {
+    /* 픽셀 아트가 흐려지지 않게 */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, calc(100vh * 480 / 272));
+    height: auto;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="480" height="272"></canvas>
+<script>
+// ===== 1. 에셋 불러오기 =====
+// 파일을 두 번 눌러 열어도(file://) 되도록 Image 와 Audio 로만 불러온다.
+const IMG = 'assets/images/';
+const SND = 'assets/sounds/';
+
+function loadImage(file) {
+  const img = new Image();
+  img.src = IMG + file;
+  return img;
+}
+
+// 닌자 개구리: 32×32 프레임이 가로 한 줄로 이어진 시트 (drop.json 의 anims 정보)
+const FROG = {
+  idle:         { img: loadImage('ninja-frog_idle.png'),        frames: 11, fps: 20, loop: true },
+  run:          { img: loadImage('ninja-frog_run.png'),         frames: 12, fps: 20, loop: true },
+  jump:         { img: loadImage('ninja-frog_jump.png'),        frames: 1,  fps: 20, loop: true },
+  'double-jump':{ img: loadImage('ninja-frog_double-jump.png'), frames: 6,  fps: 20, loop: true },
+  fall:         { img: loadImage('ninja-frog_fall.png'),        frames: 1,  fps: 10, loop: true },
+  'wall-jump':  { img: loadImage('ninja-frog_wall-jump.png'),   frames: 5,  fps: 20, loop: true },
+  hit:          { img: loadImage('ninja-frog_hit.png'),         frames: 7,  fps: 20, loop: false },
+};
+// 딸기: 32×32 프레임 17장, 12fps
+const BERRY = { img: loadImage('strawberry_spin.png'), frames: 17, fps: 12 };
+// 지형 타일셋: 352×176, 한 칸 16×16
+const TILESET = loadImage('terrain-tileset.png');
+// 파란 무늬 배경: 64×64 를 화면 가득 반복
+const BG = loadImage('blue-pattern-background.png');
+
+// 소리
+const sJump = new Audio(SND + 'jump.wav');
+const sCoin = new Audio(SND + 'coin.wav');
+const music = new Audio(SND + 'stage-1.ogg');
+music.loop = true;      // 끊김 없이 반복
+music.volume = 0.5;
+
+function playSound(sound) {
+  // 소리가 겹쳐도 끊기지 않게 복사해서 재생
+  const s = sound.cloneNode();
+  s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
+// ===== 2. 화면 준비 =====
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;   // 최근접(nearest) 필터
+const VIEW_W = canvas.width, VIEW_H = canvas.height;
+const T = 16;  // 타일 한 칸 크기
+
+// ===== 3. 맵 =====
+// # 땅   o 딸기   P 개구리 시작 위치   . 빈칸
+const MAP = [
+  '............................................................',
+  '............................................................',
+  '............................................................',
+  '..................................o.........................',
+  '............................................................',
+  '..................................o.........................',
+  '.................................###........................',
+  '...............o..................................o.........',
+  '..............###............oo..................###........',
+  '............................####............................',
+  '.........oo.................................o...............',
+  '........####...........o...................####........o....',
+  '...................o..####.............o..............####..',
+  '............................................................',
+  '...P..o...................................................o.',
+  '##################...#################...###################',
+  '##################...#################...###################',
+];
+const COLS = MAP[0].length, ROWS = MAP.length;
+const WORLD_W = COLS * T;
+
+function isSolid(col, row) {
+  if (col < 0 || col >= COLS) return true;   // 양옆 끝은 벽
+  if (row < 0) return false;
+  if (row >= ROWS) return false;             // 아래는 구멍(떨어짐)
+  return MAP[row][col] === '#';
+}
+
+// 타일셋의 풀밭 덩어리(3×3칸)가 있는 곳: 왼쪽 위가 (6, 0) 칸
+const GRASS_COL = 6, GRASS_ROW = 0;
+function tileFor(col, row) {
+  // 화면 밖 아래쪽은 땅이 이어진 것처럼 보이게
+  const solid = (c, r) => r >= ROWS ? MAP[ROWS - 1][c] === '#' : isSolid(c, r);
+  const up = solid(col, row - 1), down = solid(col, row + 1);
+  const left = solid(col - 1, row), right = solid(col + 1, row);
+  const ty = !up ? 0 : (!down ? 2 : 1);
+  const tx = (!left && right) ? 0 : (left && !right) ? 2 : 1;
+  return [GRASS_COL + tx, GRASS_ROW + ty];
+}
+
+// ===== 4. 게임 상태 =====
+const GRAVITY = 900, JUMP = 330, SPEED = 120, MAX_FALL = 400;
+let player, berries, score, total, cameraX, state, time, bgOffset;
+
+function reset() {
+  berries = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (MAP[r][c] === 'o') berries.push({ x: c * T + 8, y: r * T + 8, got: false, pop: 0 });
+      if (MAP[r][c] === 'P') player = makePlayer(c * T, r * T);
+    }
+  }
+  score = 0;
+  total = berries.length;
+  cameraX = 0;
+  time = 0;
+}
+
+function makePlayer(x, y) {
+  // 그림은 32×32 지만 부딪힘 상자는 몸통 크기(18×26)만
+  return { x: x, y: y - 10, w: 18, h: 26, vx: 0, vy: 0, onGround: false,
+           jumps: 0, face: 1, anim: 'idle', animTime: 0, hitTime: 0,
+           startX: x, startY: y - 10 };
+}
+
+// ===== 5. 키보드 =====
+// e.code 를 쓰면 한글 입력 상태여도 같은 키로 인식된다
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
+  if (state === 'title') { startGame(); return; }
+  if (e.code === 'Space' && !e.repeat) tryJump();
+  if (e.code === 'KeyR' && state === 'clear') { reset(); state = 'play'; }
+  if (e.code === 'KeyM') music.muted = !music.muted;
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+function startGame() {
+  state = 'play';
+  // 브라우저는 키를 누른 뒤에야 소리를 낼 수 있게 해 준다
+  music.play().catch(() => {});
+}
+
+function tryJump() {
+  if (state !== 'play' || player.hitTime > 0) return;
+  if (player.onGround || player.jumps < 2) {
+    player.jumps = player.onGround ? 1 : 2;
+    player.vy = -JUMP;
+    player.onGround = false;
+    playSound(sJump);
+  }
+}
+
+// ===== 6. 움직임과 부딪힘 =====
+function update(dt) {
+  time += dt;
+  bgOffset = (time * 20) % 64;
+  if (state !== 'play') return;
+
+  const p = player;
+
+  // 구멍에 떨어진 뒤: 피격 애니메이션을 보여 주고 처음 자리로
+  if (p.hitTime > 0) {
+    p.hitTime -= dt;
+    if (p.hitTime <= 0) { Object.assign(p, makePlayer(p.startX, p.startY + 10)); }
+    p.animTime += dt;
+    return;
+  }
+
+  // 좌우
+  p.vx = 0;
+  if (keys.ArrowLeft)  { p.vx = -SPEED; p.face = -1; }
+  if (keys.ArrowRight) { p.vx =  SPEED; p.face =  1; }
+
+  // 중력
+  p.vy = Math.min(p.vy + GRAVITY * dt, MAX_FALL);
+
+  // 가로로 움직이고 벽 확인
+  p.x += p.vx * dt;
+  if (p.vx !== 0) {
+    const edge = p.vx > 0 ? p.x + p.w : p.x;
+    const col = Math.floor(edge / T);
+    for (let row = Math.floor(p.y / T); row <= Math.floor((p.y + p.h - 1) / T); row++) {
+      if (isSolid(col, row)) {
+        p.x = p.vx > 0 ? col * T - p.w : (col + 1) * T;
+        break;
+      }
+    }
+  }
+
+  // 세로로 움직이고 바닥·천장 확인
+  p.y += p.vy * dt;
+  p.onGround = false;
+  const edgeY = p.vy > 0 ? p.y + p.h : p.y;
+  const rowY = Math.floor(edgeY / T);
+  for (let col = Math.floor(p.x / T); col <= Math.floor((p.x + p.w - 1) / T); col++) {
+    if (isSolid(col, rowY)) {
+      if (p.vy > 0) { p.y = rowY * T - p.h; p.onGround = true; p.jumps = 0; }
+      else          { p.y = (rowY + 1) * T; }
+      p.vy = 0;
+      break;
+    }
+  }
+
+  // 구멍에 빠짐
+  if (p.y > VIEW_H + 40) {
+    p.hitTime = FROG.hit.frames / FROG.hit.fps + 0.3;
+    setAnim(p, 'hit');
+    return;
+  }
+
+  // 딸기 줍기
+  for (const b of berries) {
+    if (b.got) continue;
+    const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+    if (Math.abs(cx - b.x) < 14 && Math.abs(cy - b.y) < 18) {
+      b.got = true;
+      score++;
+      playSound(sCoin);
+      if (score === total) state = 'clear';
+    }
+  }
+  for (const b of berries) if (b.got && b.pop < 1) b.pop += dt * 3;
+
+  // 애니메이션 고르기
+  let next;
+  if (!p.onGround) next = p.vy < 0 ? (p.jumps === 2 ? 'double-jump' : 'jump') : 'fall';
+  else next = p.vx !== 0 ? 'run' : 'idle';
+  setAnim(p, next);
+  p.animTime += dt;
+
+  // 카메라가 개구리를 따라감
+  cameraX = Math.max(0, Math.min(WORLD_W - VIEW_W, p.x + p.w / 2 - VIEW_W / 2));
+}
+
+function setAnim(p, name) {
+  if (p.anim !== name) { p.anim = name; p.animTime = 0; }
+}
+
+// ===== 7. 그리기 =====
+function frameIndex(anim, t) {
+  const i = Math.floor(t * anim.fps);
+  return anim.loop === false ? Math.min(i, anim.frames - 1) : i % anim.frames;
+}
+
+function draw() {
+  // 배경: 64×64 무늬를 반복, 천천히 아래로 흐름
+  for (let y = -64 + bgOffset; y < VIEW_H; y += 64)
+    for (let x = 0; x < VIEW_W; x += 64)
+      ctx.drawImage(BG, x, Math.floor(y));
+
+  ctx.save();
+  ctx.translate(-Math.round(cameraX), 0);
+
+  // 땅
+  const c0 = Math.floor(cameraX / T), c1 = Math.min(COLS - 1, c0 + Math.ceil(VIEW_W / T) + 1);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = c0; c <= c1; c++) {
+      if (MAP[r][c] !== '#') continue;
+      const [tx, ty] = tileFor(c, r);
+      ctx.drawImage(TILESET, tx * T, ty * T, T, T, c * T, r * T, T, T);
+    }
+  }
+
+  // 딸기
+  const bf = frameIndex(BERRY, time);
+  for (const b of berries) {
+    if (b.got) {
+      // 주우면 위로 떠오르며 사라짐
+      if (b.pop >= 1) continue;
+      ctx.globalAlpha = 1 - b.pop;
+      ctx.drawImage(BERRY.img, bf * 32, 0, 32, 32, b.x - 16, b.y - 16 - b.pop * 16, 32, 32);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.drawImage(BERRY.img, bf * 32, 0, 32, 32, b.x - 16, b.y - 16, 32, 32);
+    }
+  }
+
+  // 개구리 (몸통 상자 기준으로 32×32 그림을 맞춰 그림)
+  if (player) {
+    const p = player, a = FROG[p.anim];
+    const f = frameIndex(a, p.animTime);
+    const dx = Math.round(p.x + p.w / 2 - 16), dy = Math.round(p.y + p.h - 32);
+    const hy = p.anim === 'hit' ? Math.min(dy, VIEW_H - 40) : dy;  // 떨어진 뒤에도 보이게
+    ctx.save();
+    if (p.face < 0) {
+      ctx.translate(dx + 32, hy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(a.img, f * 32, 0, 32, 32, 0, 0, 32, 32);
+    } else {
+      ctx.drawImage(a.img, f * 32, 0, 32, 32, dx, hy, 32, 32);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // 점수
+  ctx.drawImage(BERRY.img, 0, 0, 32, 32, 4, 0, 32, 32);
+  text(`${score} / ${total}`, 34, 21, 'left', 14);
+
+  if (state === 'title') {
+    shade();
+    text('딸기 모으기', VIEW_W / 2, 100, 'center', 28);
+    text('← → 움직이기   스페이스 점프 (공중에서 한 번 더)', VIEW_W / 2, 140, 'center', 12);
+    text('아무 키나 눌러 시작', VIEW_W / 2, 175, 'center', 14, Math.sin(time * 4) > 0 ? '#ffe66d' : '#fff');
+  } else if (state === 'clear') {
+    shade();
+    text('딸기를 다 모았어요!', VIEW_W / 2, 115, 'center', 26, '#ffe66d');
+    text('R 키: 다시 하기', VIEW_W / 2, 155, 'center', 14);
+  }
+}
+
+function shade() {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+}
+
+function text(str, x, y, align, size, color = '#fff') {
+  ctx.font = `bold ${size}px sans-serif`;
+  ctx.textAlign = align;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#000';
+  ctx.strokeText(str, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+
+// ===== 8. 시작 =====
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 1 / 30);  // 너무 큰 한 걸음은 막음
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+reset();
+state = 'title';
+bgOffset = 0;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
