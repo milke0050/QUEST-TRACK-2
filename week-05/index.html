@@ -8,7 +8,7 @@
   html, body { margin: 0; height: 100%; background: #14101f; color: #e8e4f4;
     font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
   body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
-  canvas { width: min(96vw, calc((100vh - 120px) * 16 / 9)); aspect-ratio: 16 / 9;
+  canvas { width: min(96vw, calc((100vh - 160px) * 16 / 9)); aspect-ratio: 16 / 9;
     image-rendering: pixelated; background: #000; border: 2px solid #3a2f5c; border-radius: 6px; }
   #help { display: flex; gap: 28px; flex-wrap: wrap; justify-content: center; font-size: 14px; line-height: 1.6; }
   #help b { color: #ffd76a; }
@@ -19,11 +19,11 @@
 <canvas id="game"></canvas>
 <div id="help">
   <div><b>1P 닌자 개구리</b> · 이동 <kbd>A</kbd><kbd>D</kbd> · 점프 <kbd>W</kbd> (공중에서 한 번 더) · 내려가기 <kbd>S</kbd><br>
-    주먹 <kbd>F</kbd> · 총알 <kbd>G</kbd> · 전기 충격 <kbd>H</kbd> (기력 50)</div>
+    주먹 <kbd>F</kbd> · 총알 <kbd>G</kbd> · 전기 충격 <kbd>H</kbd> (기력 50) · 피하기 <kbd>E</kbd></div>
   <div><b>2P VR 소년</b> · 이동 <kbd>←</kbd><kbd>→</kbd> · 점프 <kbd>↑</kbd> · 내려가기 <kbd>↓</kbd><br>
-    주먹 <kbd>,</kbd> · 총알 <kbd>.</kbd> · 전기 충격 <kbd>/</kbd> (숫자패드 1 2 3 도 됨)</div>
-  <div><b>혼자 하기</b>일 때는 1P 를 방향키·<kbd>Space</kbd>·<kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> 로도 움직일 수 있어요.<br>
-    벽에 붙어서 점프하면 벽 점프! · <kbd>Esc</kbd> 처음 화면</div>
+    주먹 <kbd>,</kbd> · 총알 <kbd>.</kbd> · 전기 충격 <kbd>/</kbd> · 피하기 <kbd>오른쪽 Shift</kbd> (숫자패드 1 2 3 0 도 됨)</div>
+  <div><b>혼자 하기</b>일 때는 1P 를 방향키·<kbd>Space</kbd>·<kbd>J</kbd><kbd>K</kbd><kbd>L</kbd>·피하기 <kbd>;</kbd> 로도 움직일 수 있어요.<br>
+    피하기: 땅에서 구르는 동안은 아무것도 안 맞아요 · 벽에 붙어서 점프하면 벽 점프! · <kbd>Esc</kbd> 처음 화면</div>
 </div>
 <script>
 'use strict';
@@ -74,6 +74,7 @@ const SKILLS = {
   punch: { cd: 0.35, dmg: 7,  kb: 150, stun: 0.30 },
   shot:  { cd: 0.90, dmg: 6,  kb: 100, stun: 0.25, speed: 260 },
   shock: { cd: 1.20, dmg: 18, kb: 240, stun: 0.65, lift: 210, cost: 50, delay: 0.17 },
+  roll:  { cd: 0.80, time: 0.35, speed: 220 },   // 피하기: 구르는 동안 안 맞음
 };
 const PLATFORMS = [ { x: 60, y: 182, w: 90 }, { x: 330, y: 182, w: 90 }, { x: 195, y: 132, w: 90 } ];
 const ROUND_TIME = 60, WINS_NEEDED = 2;
@@ -81,11 +82,11 @@ const ROUND_TIME = 60, WINS_NEEDED = 2;
 // ================= 키 입력 =================
 const down = new Set(), pressed = new Set();
 const KEYMAP = {
-  p1: { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], down: ['KeyS'], s1: ['KeyF'], s2: ['KeyG'], s3: ['KeyH'] },
+  p1: { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], down: ['KeyS'], s1: ['KeyF'], s2: ['KeyG'], s3: ['KeyH'], dodge: ['KeyE'] },
   p2: { left: ['ArrowLeft'], right: ['ArrowRight'], jump: ['ArrowUp'], down: ['ArrowDown'],
-        s1: ['Comma', 'Numpad1'], s2: ['Period', 'Numpad2'], s3: ['Slash', 'Numpad3'] },
+        s1: ['Comma', 'Numpad1'], s2: ['Period', 'Numpad2'], s3: ['Slash', 'Numpad3'], dodge: ['ShiftRight', 'Numpad0'] },
   solo: { left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], jump: ['KeyW', 'ArrowUp', 'Space'],
-          down: ['KeyS', 'ArrowDown'], s1: ['KeyF', 'KeyJ'], s2: ['KeyG', 'KeyK'], s3: ['KeyH', 'KeyL'] },
+          down: ['KeyS', 'ArrowDown'], s1: ['KeyF', 'KeyJ'], s2: ['KeyG', 'KeyK'], s3: ['KeyH', 'KeyL'], dodge: ['KeyE', 'Semicolon'] },
 };
 const GAME_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'Slash']);
 addEventListener('keydown', e => {
@@ -101,7 +102,7 @@ function humanInput(map) {
   return {
     move: (anyDown(map.right) ? 1 : 0) - (anyDown(map.left) ? 1 : 0),
     jump: anyPressed(map.jump), down: anyDown(map.down),
-    s1: anyPressed(map.s1), s2: anyPressed(map.s2), s3: anyPressed(map.s3),
+    s1: anyPressed(map.s1), s2: anyPressed(map.s2), s3: anyPressed(map.s3), dodge: anyPressed(map.dodge),
   };
 }
 
@@ -112,9 +113,9 @@ let shake = 0, hitstop = 0, banner = '', subBanner = '', titleT = 0;
 
 function makeFighter(kind, x, facing, ctrl, tag) {
   return { kind, def: CHAR_DEFS[kind], x, y: GROUND, vx: 0, vy: 0, kb: 0, facing, ctrl, tag,
-    onGround: true, jumpsUsed: 0, djT: 9, wall: 0, dropT: 0, castT: 0,
+    onGround: true, jumpsUsed: 0, djT: 9, wall: 0, dropT: 0, castT: 0, rollT: 0, rollDir: 0,
     hp: 100, hpShown: 100, energy: 0, noEnergyT: 0,
-    anim: 'idle', animT: 0, stun: 0, invuln: 0, cd: { punch: 0, shot: 0, shock: 0 }, pendingShock: null };
+    anim: 'idle', animT: 0, stun: 0, invuln: 0, cd: { punch: 0, shot: 0, shock: 0, roll: 0 }, pendingShock: null };
 }
 function startMatch(m) { mode = m; wins = [0, 0]; round = 1; startRound(); }
 function startRound() {
@@ -143,19 +144,26 @@ function updateFighter(f, opp, inp, dt) {
   f.noEnergyT = Math.max(0, f.noEnergyT - dt);
   f.dropT = Math.max(0, f.dropT - dt);
   f.castT = Math.max(0, f.castT - dt);
+  f.rollT = Math.max(0, f.rollT - dt);
   f.hpShown += (f.hp - f.hpShown) * Math.min(1, dt * 4);
   if (f.stun > 0) f.stun -= dt;
   if (state === 'fight') f.energy = Math.min(100, f.energy + 3 * dt);
 
   const canAct = state === 'fight' && f.stun <= 0 && f.hp > 0;
-  const move = canAct && f.castT <= 0 ? inp.move : 0;
-  if (canAct) {
+  // 피하기: 땅에서 누른 방향으로 구름 (방향키를 안 누르면 상대 반대쪽으로)
+  if (canAct && f.rollT <= 0 && f.castT <= 0 && inp.dodge && f.cd.roll <= 0 && f.onGround) {
+    f.rollDir = inp.move || (opp.x >= f.x ? -1 : 1);
+    f.rollT = SKILLS.roll.time; f.cd.roll = SKILLS.roll.cd; f.facing = f.rollDir;
+  }
+  const rolling = f.rollT > 0;
+  const move = canAct && f.castT <= 0 && !rolling ? inp.move : 0;
+  if (canAct && !rolling) {
     if (move !== 0) f.facing = move;
     else if (f.onGround) f.facing = opp.x >= f.x ? 1 : -1;
   }
 
   // 점프 · 2단 점프 · 벽 점프
-  if (canAct && inp.jump) {
+  if (canAct && !rolling && inp.jump) {
     if (f.onGround && inp.down && f.y < GROUND) { f.dropT = 0.25; f.onGround = false; f.jumpsUsed = 1; }
     else if (f.onGround) { f.vy = -JUMP_V; f.onGround = false; f.jumpsUsed = 1; }
     else if (f.wall !== 0) { f.vy = -WALL_VY; f.kb = -f.wall * WALL_VX; f.facing = -f.wall; f.jumpsUsed = 1; f.wall = 0; }
@@ -163,7 +171,7 @@ function updateFighter(f, opp, inp, dt) {
   }
 
   // 스킬
-  if (canAct && f.castT <= 0) {
+  if (canAct && f.castT <= 0 && !rolling) {
     if (inp.s1 && f.cd.punch <= 0) doPunch(f, opp);
     else if (inp.s2 && f.cd.shot <= 0) doShot(f);
     else if (inp.s3 && f.cd.shock <= 0) {
@@ -178,7 +186,7 @@ function updateFighter(f, opp, inp, dt) {
   // 가로 이동 + 밀려남
   f.kb -= f.kb * Math.min(1, (f.onGround ? 7 : 2.5) * dt);
   if (Math.abs(f.kb) < 2) f.kb = 0;
-  f.vx = move * SPEED + f.kb;
+  f.vx = (rolling ? f.rollDir * SKILLS.roll.speed : move * SPEED) + f.kb;
 
   // 세로 이동
   f.vy += GRAVITY * dt;
@@ -205,6 +213,7 @@ function updateFighter(f, opp, inp, dt) {
   // 애니메이션 고르기
   let a;
   if (f.stun > 0 || f.hp <= 0) a = 'hit';
+  else if (rolling) a = 'double-jump';            // 구르기 그림이 없어서 공중제비 그림을 씀
   else if (f.onGround) a = move !== 0 ? 'run' : 'idle';
   else if (f.wall !== 0) a = 'wall-jump';
   else if (f.jumpsUsed === 2 && f.djT < 0.3) a = 'double-jump';
@@ -247,7 +256,7 @@ function shockHit(f, opp, ps) {
   if (overlap(area, boxOf(opp))) hit(opp, f, s.dmg, s.kb, s.lift, s.stun, 'boom', opp.x, opp.y - 14);
 }
 function hit(t, a, dmg, kb, lift, stun, fx, fxX, fxY, dir) {
-  if (t.invuln > 0 || state !== 'fight' || t.hp <= 0) return false;
+  if (t.invuln > 0 || t.rollT > 0 || state !== 'fight' || t.hp <= 0) return false;
   const d = dir || Math.sign(t.x - a.x) || a.facing;
   t.hp = Math.max(0, t.hp - dmg);
   t.kb = d * kb;
@@ -269,7 +278,7 @@ function updateProjectiles(dt) {
     p.t += dt; p.x += p.dir * SKILLS.shot.speed * dt;
     const box = { l: p.x - 10, r: p.x + 10, t: p.y - 3, b: p.y + 3 };
     for (const f of fighters) {
-      if (f === p.owner || p.dead) continue;
+      if (f === p.owner || p.dead || f.rollT > 0) continue;   // 구르는 중이면 총알이 지나감
       if (overlap(box, boxOf(f))) {
         const s = SKILLS.shot;
         hit(f, p.owner, s.dmg, s.kb, 0, s.stun, 'boom', p.x + p.dir * 6, p.y, p.dir);
@@ -381,6 +390,7 @@ function drawFighter(f) {
   ctx.beginPath(); ctx.ellipse(Math.round(f.x), shadowY, 9, 2.5, 0, 0, Math.PI * 2); ctx.fill();
   const img = images[`${f.def.file}_${f.anim}.png`];
   if (f.invuln > 0 && Math.floor(f.invuln * 40) % 2 === 0) ctx.globalAlpha = 0.6;
+  if (f.rollT > 0) ctx.globalAlpha = 0.5;
   drawSheet(img, f.def.fw, f.def.fh, charFrame(f), f.x, f.y + 1, f.facing < 0);
   ctx.globalAlpha = 1;
   ctx.font = `bold 7px ${FONT}`; ctx.textAlign = 'center';
@@ -437,16 +447,17 @@ function drawHUD() {
       ctx.beginPath(); ctx.arc(dx + 3, ey + 11, 3, 0, Math.PI * 2); ctx.fill();
     }
     // 스킬 칸 (다시 쓸 수 있을 때까지 어둡게)
-    const keys = f.ctrl === 'p2' ? [',', '.', '/'] : f.ctrl === 'cpu' ? ['주먹', '총알', '전기'] : ['F', 'G', 'H'];
-    const names = ['punch', 'shot', 'shock'];
+    const labels = ['주먹', '총알', '전기', '피하기'];
+    const keys = f.ctrl === 'p2' ? [',', '.', '/', '⇧'] : f.ctrl === 'cpu' ? labels : ['F', 'G', 'H', 'E'];
+    const names = ['punch', 'shot', 'shock', 'roll'];
     names.forEach((k, j) => {
-      const bx = i === 0 ? x + j * 26 : x + barW - 24 - j * 26, by = ey + 19;
+      const bw = 28, bx = i === 0 ? x + j * (bw + 2) : x + barW - bw - j * (bw + 2), by = ey + 19;
       const rate = f.cd[k] / SKILLS[k].cd;
       const usable = rate <= 0 && (k !== 'shock' || ready);
-      ctx.fillStyle = usable ? '#3a2f5c' : '#1a1430'; ctx.fillRect(bx, by, 24, 9);
-      if (rate > 0) { ctx.fillStyle = '#ffffff22'; ctx.fillRect(bx, by, 24 * (1 - rate), 9); }
+      ctx.fillStyle = usable ? '#3a2f5c' : '#1a1430'; ctx.fillRect(bx, by, bw, 9);
+      if (rate > 0) { ctx.fillStyle = '#ffffff22'; ctx.fillRect(bx, by, bw * (1 - rate), 9); }
       ctx.fillStyle = usable ? '#ffffff' : '#7a7090'; ctx.font = `bold 6px ${FONT}`; ctx.textAlign = 'center';
-      ctx.fillText(f.ctrl === 'cpu' ? keys[j] : `${keys[j]} ${['주먹', '총알', '전기'][j]}`, bx + 12, by + 6.5);
+      ctx.fillText(f.ctrl === 'cpu' ? keys[j] : `${keys[j]} ${labels[j]}`, bx + bw / 2, by + 6.5);
     });
   });
   ctx.textAlign = 'center'; ctx.font = `bold 16px ${FONT}`;
