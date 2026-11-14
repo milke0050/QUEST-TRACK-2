@@ -72,6 +72,15 @@
     animation: spin 0.9s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #days { display: flex; gap: 8px; margin: -8px 0 16px; }
+  #days button {
+    flex: 1;
+    margin: 0;
+    background: #fff;
+    color: #2f6f4f;
+    border: 2px solid #2f6f4f;
+  }
+  #days button.on { background: #2f6f4f; color: #fff; }
   .offline {
     background: #fff4d6;
     border: 1px solid #f2b84b;
@@ -89,6 +98,10 @@
 <main>
   <h1>오늘 급식</h1>
   <p id="date"></p>
+  <div id="days">
+    <button type="button" data-offset="0" class="on" aria-pressed="true" onclick="selectDay(0)">오늘</button>
+    <button type="button" data-offset="1" aria-pressed="false" onclick="selectDay(1)">내일</button>
+  </div>
   <div id="content"></div>
 </main>
 
@@ -100,13 +113,42 @@
   const content = document.getElementById("content");
 
   // 한국 시간 기준 오늘 날짜 (주소 끝에 ?date=20261113 처럼 붙이면 그 날짜로 볼 수 있음)
-  function getDate() {
+  function getToday() {
     const fromUrl = new URLSearchParams(location.search).get("date");
     if (fromUrl && /^\d{8}$/.test(fromUrl)) return fromUrl;
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit"
     }).format(new Date()); // 2026-11-14
     return parts.replace(/-/g, "");
+  }
+
+  // [오늘] [내일] 단추: 0 이면 오늘, 1 이면 내일
+  let dayOffset = 0;
+
+  function addDays(ymd, n) {
+    const d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8) + n));
+    return d.toISOString().slice(0, 10).replace(/-/g, "");
+  }
+
+  function getDate() {
+    return addDays(getToday(), dayOffset);
+  }
+
+  // 날짜를 "오늘" / "내일" / "11월 13일" 로 부르기
+  function dayWord(ymd) {
+    if (ymd === getToday()) return "오늘";
+    if (ymd === addDays(getToday(), 1)) return "내일";
+    return shortDate(ymd);
+  }
+
+  function selectDay(offset) {
+    dayOffset = offset;
+    document.querySelectorAll("#days button").forEach((b) => {
+      const on = +b.dataset.offset === offset;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on);
+    });
+    load();
   }
 
   function showDate(ymd) {
@@ -203,9 +245,9 @@
     return null;
   }
 
-  function showResult(rows) {
+  function showResult(rows, ymd) {
     if (rows.length) showMeals(rows);
-    else showMessage("오늘은 급식이 없습니다");
+    else showMessage(`${dayWord(ymd)}은 급식이 없습니다`);
   }
 
   function shortDate(ymd) {
@@ -220,7 +262,7 @@
       return;
     }
     showDate(saved.ymd);
-    showResult(saved.rows);
+    showResult(saved.rows, saved.ymd);
 
     const when = new Date(saved.fetchedAt).toLocaleString("ko-KR", {
       timeZone: "Asia/Seoul", year: "numeric", month: "long", day: "numeric",
@@ -233,7 +275,7 @@
     box.appendChild(title);
     const lines = [`받은 때: ${when}`, `까닭: ${reason}`];
     if (saved.ymd !== today) {
-      lines.unshift(`아래는 오늘(${shortDate(today)})이 아니라 ${shortDate(saved.ymd)} 급식이에요.`);
+      lines.unshift(`아래는 ${dayWord(today)}(${shortDate(today)})이 아니라 ${shortDate(saved.ymd)} 급식이에요.`);
     }
     for (const text of lines) {
       const p = document.createElement("p");
@@ -247,7 +289,10 @@
     content.prepend(box);
   }
 
+  let loadCount = 0;
+
   async function load() {
+    const myTurn = ++loadCount; // 단추를 빨리 바꿔 누르면 앞서 부탁한 응답은 버림
     const ymd = getDate();
     showDate(ymd);
     showLoading();
@@ -262,11 +307,13 @@
 
     try {
       const res = await fetch(url, { signal: controller.signal });
+      if (myTurn !== loadCount) return;
       if (!res.ok) {
         fail(`나이스 서버가 응답하지 않아요 (오류 ${res.status}). 잠시 뒤에 다시 해 보세요.`, ymd);
         return;
       }
       const data = await res.json();
+      if (myTurn !== loadCount) return;
 
       if (data.mealServiceDietInfo) {
         const head = data.mealServiceDietInfo[0].head;
@@ -274,18 +321,19 @@
         const code = head[1].RESULT.CODE;
         const list = code === "INFO-000" && rows ? rows : [];
         saveLast(ymd, list);
-        showResult(list);
+        showResult(list, ymd);
         return;
       }
 
       const code = data.RESULT && data.RESULT.CODE;
       if (code === "INFO-200") {
         saveLast(ymd, []);
-        showResult([]);
+        showResult([], ymd);
       } else {
         fail(`나이스가 알려 준 까닭: ${(data.RESULT && data.RESULT.MESSAGE) || "알 수 없음"}`, ymd);
       }
     } catch (err) {
+      if (myTurn !== loadCount) return;
       if (err.name === "AbortError") {
         fail("10초 동안 응답이 없어요. 인터넷 연결을 확인하고 다시 해 보세요.", ymd);
       } else if (!navigator.onLine) {
