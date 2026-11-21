@@ -70,14 +70,15 @@ function startTurn(st) {
 }
 
 // ---------- 기업 행동 ----------
+const BUILD_PHASES = [PH.BUILD1, PH.BUILD2]; // 공장을 정하고 고치는 두 단계
 // phase 는 숫자 하나 또는 목록. 지금 단계가 맞으면 null, 아니면 안내 글을 돌려준다.
 const need = (st, phase) => ([].concat(phase).includes(st.phase) ? null : "지금은 할 수 없는 단계예요.");
 
 function setFactory(st, cid, i, product, price) {
   const f = seatOf(st, cid).factories[i];
-  if (!f || need(st, PH.BUILD2)) return; // 만들 제품·가격은 2차에서 정하고 고친다
-  f.product = product || null;
-  f.price = price;
+  if (!f || need(st, BUILD_PHASES)) return;
+  f.product = product || null; // 무엇을 팔지는 1차에서 정하고, 2차에서 고칠 수 있다
+  if (st.phase === PH.BUILD2) f.price = price; // 가격은 2차(조사한 뒤)에서만 정한다
 }
 function upgradeFactory(st, cid, i) {
   const c = seatOf(st, cid), f = c.factories[i], cost = f && UPGRADE_COST[f.level];
@@ -169,8 +170,9 @@ function rankedProducts(st) {
   return Object.keys(s).sort((a, b) => s[b] - s[a] || noise[b] - noise[a]);
 }
 
-// 1차 공장 준비(투자): 봇은 공장을 늘리거나 올리고, 보안과 카드를 쓴다.
+// 1차 공장 준비: 봇은 공장을 늘리거나 올리고, 보안과 카드를 쓰고, 무엇을 팔지(제품)를 정한다.
 function botPrepare(st) {
+  const ranked = rankedProducts(st);
   companiesOf(st).filter((c) => c.bot).forEach((c) => {
     if (c.factories.length < MAX_SLOTS && c.coins > 600 && RNG() < 0.3) addFactory(st, c.id);
     c.factories.forEach((f, i) => {
@@ -178,18 +180,19 @@ function botPrepare(st) {
     });
     if (c.coins > 300 && RNG() < 0.3) toggleSecure(st, c.id);
     if (c.coins > 300 && RNG() < 0.4) useCard(st, c.id, pick(c.hand));
-  });
-}
-
-// 2차 공장 준비가 열릴 때: 봇이 만들 제품과 가격을 정한다. (사람은 2차 동안 정하고 고친다)
-function botChoose(st) {
-  const ranked = rankedProducts(st);
-  companiesOf(st).filter((c) => c.bot).forEach((c) => {
     c.factories.forEach((f, i) => {
       let want = i === 0 || RNG() < 0.5 ? ranked[0] : ranked[1];
       const crowded = companiesOf(st).some((o) => o.id !== c.id && o.factories.some((g) => g.product === want));
       if (crowded && want === ranked[0] && RNG() < 0.4) want = ranked[1]; // 남들이 몰린 제품은 가끔 피한다
       f.product = want;
+    });
+  });
+}
+
+// 2차 공장 준비가 열릴 때: 봇이 가격을 정한다. (사람은 2차 동안 상대를 조사하고 가격을 정한다)
+function botPricing(st) {
+  companiesOf(st).filter((c) => c.bot).forEach((c) => {
+    c.factories.forEach((f) => {
       const r = RNG();
       f.price = f.level >= 2 ? (r < 0.2 ? "low" : r < 0.5 ? "mid" : "high") : r < 0.3 ? "low" : r < 0.8 ? "mid" : "high";
     });
@@ -397,7 +400,7 @@ function advance(st) {
   const p = st.phase;
   // 봇은 새 단계가 열린 뒤에 행동한다
   if (p === PH.HINT) { st.phase = PH.BUILD1; botPrepare(st); } // 1차: 봇이 투자한다
-  else if (p === PH.BUILD1) { st.phase = PH.BUILD2; botChoose(st); } // 2차가 열리면 봇이 제품·가격을 정한다
+  else if (p === PH.BUILD1) { st.phase = PH.BUILD2; botPricing(st); } // 2차가 열리면 봇이 가격을 정한다
   else if (p === PH.BUILD2) { botSpy(st); botRevise(st); st.phase = PH.STOCK; botInvest(st); } // 2차가 끝날 때 봇이 사람의 최종 선택을 조사하고(조사는 2차에만 가능) 고친다
   else if (p === PH.STOCK) { rollEvent(st); st.phase = PH.EVENT; }
   else if (p === PH.EVENT) { settle(st); st.phase = PH.RESULT; }
