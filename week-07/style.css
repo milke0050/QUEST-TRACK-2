@@ -2,7 +2,10 @@
 body { font-family: system-ui, "Malgun Gothic", sans-serif; margin: 0; background: #f4f6fb; color: #222; line-height: 1.5; overflow-wrap: anywhere; }
 header { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding: 10px 16px; background: #1f3a68; color: #fff; }
 header h1 { font-size: 1.1rem; margin: 0; }
-#login-slot { padding: 4px 12px; border: 1px dashed #9fb4d9; border-radius: 8px; font-size: .9rem; color: #cfdcf5; }
+#login-slot { min-height: 32px; font-size: .9rem; display: flex; align-items: center; gap: 6px; }
+#login-slot button { margin: 0; }
+#error { background: #ffe3e3; color: #8a1c1c; border-bottom: 2px solid #e57373; padding: 10px 16px; }
+#error[hidden] { display: none; }
 main { max-width: 1000px; margin: 0 auto; padding: 12px; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; align-items: start; }
 .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px #0002; }

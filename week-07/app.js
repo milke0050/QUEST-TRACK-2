@@ -1,7 +1,12 @@
-// 화면 코드. 규칙은 game.js, 숫자는 data.js, 저장은 storage.js 에 있다.
-let state = Store.load();
+// 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
+import { Store } from "./storage.js";
+
+let state = null; // 내 판 상태 (로그인 뒤에 Firestore 에서 불러온다)
+let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let flash = "";
 const app = document.getElementById("app");
+const loginSlot = document.getElementById("login-slot");
+const errorBox = document.getElementById("error");
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const me = () => seatOf(state, state.room.mySeat);
@@ -9,10 +14,81 @@ const prod = (p) => (p ? `${PRODUCTS[p].icon} ${PRODUCTS[p].name}` : "쉬는 공
 const tierText = (t) => `${PRICES[t].label} ${PRICES[t].price}`;
 const sign = (n) => (n > 0 ? "+" + n : String(n));
 
+// ---------- 오류 보여 주기 ----------
+function errText(e) {
+  const code = (e && e.code) || "";
+  const map = {
+    "auth/popup-closed-by-user": "로그인 창이 닫혔어요. 다시 눌러 보세요.",
+    "auth/cancelled-popup-request": "로그인 창이 이미 열려 있어요.",
+    "auth/popup-blocked": "브라우저가 로그인 창을 막았어요. 팝업을 허용해 주세요.",
+    "auth/unauthorized-domain": "이 주소가 Firebase 의 '승인된 도메인'에 없어요. 콘솔에서 추가해 주세요.",
+    "auth/operation-not-allowed": "Firebase 콘솔에서 Google 로그인이 켜져 있지 않아요.",
+    "auth/network-request-failed": "인터넷 연결을 확인해 주세요.",
+    "permission-denied": "저장 권한이 없어요. 보안 규칙을 콘솔에 붙여 넣었는지 확인해 주세요.",
+    "unavailable": "서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요.",
+  };
+  return map[code] || `${code || "알 수 없는 오류"} ${(e && e.message) || ""}`.trim();
+}
+function showError(prefix, e) {
+  console.error(prefix, e);
+  errorBox.textContent = `⚠️ ${prefix}: ${errText(e)}`;
+  errorBox.hidden = false;
+}
+function clearError() { errorBox.hidden = true; errorBox.textContent = ""; }
+
+// ---------- 저장 ----------
+function persist() {
+  if (auth.status !== "in" || !state) return;
+  Store.saveGame(auth.uid, auth.nickname, state).then(clearError).catch((e) => showError("저장에 실패했어요", e));
+}
+
 function commit(msg) {
   flash = msg || "";
-  Store.save(state);
+  persist();
   render();
+}
+
+// ---------- 로그인 ----------
+async function afterLogin(uid) {
+  auth = { status: "loading", uid, nickname: "" };
+  render();
+  try {
+    const prof = await Store.loadProfile(uid);
+    if (!prof) { auth.status = "needNick"; render(); return; }
+    auth.nickname = prof.nickname;
+    state = await Store.loadGame(uid);
+    auth.status = "in";
+    clearError();
+  } catch (e) {
+    auth.status = "error";
+    showError("불러오기에 실패했어요", e);
+  }
+  render();
+}
+
+Store.onUser((u) => {
+  if (u) afterLogin(u.uid);
+  else { auth = { status: "out", uid: null, nickname: "" }; state = null; render(); }
+});
+
+function loginSlotHtml() {
+  if (auth.status === "in") return `<span>😀 ${esc(auth.nickname)}</span> <button class="small gray" data-act="logout">로그아웃</button>`;
+  if (auth.status === "out" || auth.status === "error") return `<button class="small" data-act="login">Google 로 로그인</button>`;
+  if (auth.status === "needNick") return `<button class="small gray" data-act="logout">로그아웃</button>`;
+  return "";
+}
+function loginScreenHtml() {
+  if (auth.status === "loading") return `<section class="card"><p>불러오는 중…</p></section>`;
+  if (auth.status === "out") return `<section class="card"><h2>로그인하면 열리는 내 사이트</h2>
+    <p>Google 로 로그인하면 내 게임이 저장돼서, 어느 기기에서 열어도 이어서 할 수 있어요.</p>
+    <p class="muted">Google 이름과 메일은 저장하지 않아요. 내가 정한 별명만 저장돼요.</p>
+    <button data-act="login" class="big green">Google 로 로그인</button></section>`;
+  if (auth.status === "needNick") return `<section class="card"><h2>별명을 정해 주세요</h2>
+    <p class="muted">처음 로그인했어요! 게임에서 보일 별명을 1~12자로 정하세요.<br>실명·전화번호·학교 이름은 쓰지 마세요.</p>
+    <p><input type="text" id="nick" maxlength="12" placeholder="별명"></p>
+    <button data-act="savenick" class="big green">별명 정하기</button></section>`;
+  return `<section class="card"><h2>불러오지 못했어요</h2><p>위쪽 오류 글을 확인하고 다시 시도해 주세요.</p>
+    <button data-act="retry" class="big">다시 불러오기</button></section>`;
 }
 
 // ---------- 화면 조각 ----------
@@ -21,7 +97,7 @@ function lobbyHtml() {
   <section class="card">
     <h2>방 만들기</h2>
     <p class="muted">방을 만들고 내가 앉을 자리를 고르세요. 비는 자리는 봇이 채워요.<br>
-    (이 방은 지금 이 기기의 브라우저 안에서만 열려요.)</p>
+    (방과 게임은 내 계정에 저장돼서 어느 기기에서 열어도 이어서 할 수 있어요. 다른 사람이 같은 방에 들어오는 건 아직 못 해요.)</p>
     <p><label>방 이름 <input type="text" id="room-name" value="우리 방" maxlength="12"></label></p>
     <p>
       <label><input type="radio" name="role" value="company" checked> 🏭 기업 플레이어 (공장을 운영해요)</label><br>
@@ -207,7 +283,9 @@ function overHtml() {
 function render() {
   const toast = flash ? `<div class="toast">${esc(flash)}</div>` : "";
   flash = "";
-  if (!state) { app.innerHTML = lobbyHtml(); return; }
+  loginSlot.innerHTML = loginSlotHtml();
+  if (auth.status !== "in") { app.innerHTML = loginScreenHtml(); return; }
+  if (!state) { app.innerHTML = toast + lobbyHtml(); return; }
   if (state.over) { app.innerHTML = overHtml(); return; }
   const m = me();
   const panel = m.role === "company" ? companyPanelHtml() : investorPanelHtml();
@@ -221,9 +299,34 @@ function render() {
 // ---------- 누르기 / 고르기 ----------
 function run(fn) { const err = fn(); commit(err || ""); }
 
+// 로그인·로그아웃·별명 단추 (로그인 단추는 누르는 순간 바로 팝업을 열어야 막히지 않는다)
+async function authAction(act) {
+  try {
+    if (act === "login") { await Store.login(); }
+    else if (act === "logout") { await Store.logout(); clearError(); }
+    else if (act === "retry") { await afterLogin(auth.uid); }
+    else if (act === "savenick") {
+      const nick = (document.getElementById("nick").value || "").trim();
+      if (nick.length < 1 || nick.length > 12) { showError("별명을 확인해 주세요", { message: "1~12자로 정해 주세요." }); return; }
+      await Store.saveProfile(auth.uid, nick);
+      clearError();
+      await afterLogin(auth.uid);
+    }
+  } catch (e) {
+    showError(act === "login" ? "로그인에 실패했어요" : act === "savenick" ? "별명을 저장하지 못했어요" : "처리하지 못했어요", e);
+  }
+}
+
+loginSlot.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]");
+  if (b) authAction(b.dataset.act);
+});
+
 app.addEventListener("click", (e) => {
   const b = e.target.closest("[data-act]");
   if (!b || b.tagName === "SELECT") return;
+  if (["login", "logout", "retry", "savenick"].includes(b.dataset.act)) { authAction(b.dataset.act); return; }
+  if (auth.status !== "in") return;
   const act = b.dataset.act, m = state && state.room ? me() : null, i = Number(b.dataset.i), c = b.dataset.c;
   if (act === "create") {
     const name = (document.getElementById("room-name").value || "우리 방").trim() || "우리 방";
@@ -231,7 +334,10 @@ app.addEventListener("click", (e) => {
     state = newGame(name, role);
     commit();
   } else if (act === "leave") {
-    if (state.over || confirm("방을 나가면 지금 게임이 사라져요. 나갈까요?")) { Store.reset(); state = null; render(); }
+    if (state.over || confirm("방을 나가면 지금 게임이 사라져요. 나갈까요?")) {
+      state = null; render();
+      Store.deleteGame(auth.uid).then(clearError).catch((err) => showError("지우기에 실패했어요", err));
+    }
   } else if (act === "next") { advance(state); commit(); }
   else if (act === "upgrade") run(() => upgradeFactory(state, m.id, i));
   else if (act === "addfac") run(() => addFactory(state, m.id));
@@ -243,6 +349,7 @@ app.addEventListener("click", (e) => {
 
 app.addEventListener("change", (e) => {
   const s = e.target;
+  if (auth.status !== "in" || !state) return;
   if (!s.dataset || !s.dataset.act || s.tagName !== "SELECT") return;
   const m = me(), i = Number(s.dataset.i), f = m.factories[i];
   if (s.dataset.act === "product") setFactory(state, m.id, i, s.value, f.price);
