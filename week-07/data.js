@@ -1,5 +1,5 @@
 // 파일을 고칠 때마다 이 번호와 index.html·app.js 의 ?v= 번호를 함께 올린다. (브라우저가 옛 파일을 쓰는 걸 막는다)
-const BUILD = "12";
+const BUILD = "13";
 
 // 게임에 쓰는 숫자와 글을 모아 둔 곳. 규칙을 바꾸고 싶으면 여기 숫자만 고치면 된다.
 const PRODUCTS = {
@@ -41,7 +41,9 @@ const START_COINS = 1000;
 const SHARES = 10; // 회사마다 주식 수
 const START_STOCK = 100;
 
-const PHASE_NAMES = ["정세 공개", "기업 준비·비밀 조사", "주식 베팅", "돌발 뉴스", "결과 정산"];
+// 한 턴의 단계. 1차 공장 준비에서 먼저 공장을 정하고, 2차 공장 준비에서 상대 공장을 조사하고 고친다.
+const PH = { HINT: 0, BUILD1: 1, BUILD2: 2, STOCK: 3, EVENT: 4, RESULT: 5 };
+const PHASE_NAMES = ["정세 공개", "1차 공장 준비", "2차 공장 준비·조사", "주식 베팅", "돌발 뉴스", "결과 정산"];
 
 const EVENTS = {
   rawcost: { title: "💥 원자재 폭등!", text: "모든 공장 만드는 비용이 +2코인!" },
@@ -56,10 +58,10 @@ const BOT_COMPANY_NAMES = ["햇살상회", "푸른공방", "바람상점", "별�
 const BOT_INVESTOR_NAMES = ["투자봇 가", "투자봇 나", "투자봇 다", "투자봇 라"];
 
 // 주식 균형 조절 값 (투자자가 너무 유리하면 여기 숫자를 고친다)
-const STOCK_PCT_DIV = 700; // 이익 ÷ 이 값 = 주가가 움직이는 비율 (클수록 주가가 덜 움직임)
+const STOCK_PCT_DIV = 600; // 이익 ÷ 이 값 = 주가가 움직이는 비율 (클수록 주가가 덜 움직임)
 const STOCK_UP_MAX = 0.25; // 한 턴에 주가가 오르는 최대 비율
 const STOCK_DOWN_MAX = 0.25; // 한 턴에 주가가 내리는 최대 비율
-const DIVIDEND_RATE = 0.3; // 이익 중 배당으로 나가는 비율
+const DIVIDEND_RATE = 0.35; // 이익 중 배당으로 나가는 비율
 const TRADE_FEE = 0.05; // 사고팔 때 내는 수수료 비율 (0.05 = 5%)
 const BUY_PAYS_COMPANY = false; // true 면 주식 살 때 낸 코인이 그 회사로 들어간다
 const OWNER_SHARES_COUNT = false; // true 면 기업의 점수에 안 팔린 주식 값도 더한다

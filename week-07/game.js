@@ -70,17 +70,19 @@ function startTurn(st) {
 }
 
 // ---------- 기업 행동 ----------
-const need = (st, phase) => (st.phase === phase ? null : "지금은 할 수 없는 단계예요.");
+// phase 는 숫자 하나 또는 목록. 지금 단계가 맞으면 null, 아니면 안내 글을 돌려준다.
+const BUILD_PHASES = [PH.BUILD1, PH.BUILD2]; // 공장을 정하고 고치는 두 단계
+const need = (st, phase) => ([].concat(phase).includes(st.phase) ? null : "지금은 할 수 없는 단계예요.");
 
 function setFactory(st, cid, i, product, price) {
   const f = seatOf(st, cid).factories[i];
-  if (!f || need(st, 1)) return;
+  if (!f || need(st, BUILD_PHASES)) return;
   f.product = product || null;
   f.price = price;
 }
 function upgradeFactory(st, cid, i) {
   const c = seatOf(st, cid), f = c.factories[i], cost = f && UPGRADE_COST[f.level];
-  if (need(st, 1) || !cost) return "더 올릴 수 없어요.";
+  if (need(st, BUILD_PHASES) || !cost) return "더 올릴 수 없어요.";
   if (c.coins < cost) return "코인이 모자라요.";
   addCoins(st, c, -cost, `공장 ${i + 1} 업그레이드`);
   f.level++;
@@ -88,7 +90,7 @@ function upgradeFactory(st, cid, i) {
 }
 function addFactory(st, cid) {
   const c = seatOf(st, cid);
-  if (need(st, 1) || c.factories.length >= MAX_SLOTS) return "공장은 최대 3개예요.";
+  if (need(st, BUILD_PHASES) || c.factories.length >= MAX_SLOTS) return "공장은 최대 3개예요.";
   if (c.coins < NEW_SLOT_COST) return "코인이 모자라요.";
   addCoins(st, c, -NEW_SLOT_COST, "새 공장 짓기");
   c.factories.push({ level: 1, product: null, price: "mid" });
@@ -96,7 +98,7 @@ function addFactory(st, cid) {
 }
 function toggleSecure(st, cid) {
   const c = seatOf(st, cid);
-  if (need(st, 1) || c.secure) return null;
+  if (need(st, PH.BUILD1) || c.secure) return null; // 비공개 생산은 조사가 시작되기 전(1차)에만 켤 수 있다
   if (c.coins < SECURE_COST) return "코인이 모자라요.";
   addCoins(st, c, -SECURE_COST, "비공개 생산(보안)");
   c.secure = true;
@@ -106,7 +108,7 @@ function toggleSecure(st, cid) {
 // 카드: 준비 단계에서 한 장만 쓸 수 있다. 효과는 정산 때 적용된다.
 function useCard(st, cid, card) {
   const c = seatOf(st, cid), def = CARDS[card];
-  if (need(st, 1) || !def) return "지금은 카드를 쓸 수 없어요.";
+  if (need(st, BUILD_PHASES) || !def) return "지금은 카드를 쓸 수 없어요.";
   if (c.card) return "이번 턴에는 이미 카드를 썼어요.";
   if (!(c.hand || []).includes(card)) return "그 카드는 없어요.";
   if (c.coins < def.cost) return "코인이 모자라요.";
@@ -119,7 +121,7 @@ function useCard(st, cid, card) {
 // 소식(news)은 누구에게 온 것인지 seat 로 구분한다.
 function spyOn(st, spyId, targetId) {
   const s = seatOf(st, spyId), t = seatOf(st, targetId);
-  if (need(st, 1) || spyId === targetId || !t || t.role !== "company") return "지금은 조사할 수 없어요.";
+  if (need(st, PH.BUILD2) || spyId === targetId || !t || t.role !== "company") return "지금은 조사할 수 없어요.";
   st.spy[spyId] = st.spy[spyId] || {};
   if (st.spy[spyId][targetId]) return "이미 조사했어요.";
   if (s.coins < SPY_COST) return "코인이 모자라요.";
@@ -137,7 +139,7 @@ function spyOn(st, spyId, targetId) {
 // ---------- 투자자 행동 ----------
 function buyShare(st, iid, cid) {
   const i = seatOf(st, iid), c = seatOf(st, cid);
-  if (need(st, 2)) return "지금은 거래할 수 없어요.";
+  if (need(st, PH.STOCK)) return "지금은 거래할 수 없어요.";
   if (freeShares(st, cid) <= 0) return "살 수 있는 주식이 없어요.";
   const cost = Math.ceil(c.stock * (1 + TRADE_FEE));
   if (i.coins < cost) return "코인이 모자라요.";
@@ -148,7 +150,7 @@ function buyShare(st, iid, cid) {
 }
 function sellShare(st, iid, cid) {
   const i = seatOf(st, iid), c = seatOf(st, cid);
-  if (need(st, 2) || !(i.shares[cid] > 0)) return "팔 주식이 없어요.";
+  if (need(st, PH.STOCK) || !(i.shares[cid] > 0)) return "팔 주식이 없어요.";
   addCoins(st, i, Math.floor(c.stock * (1 - TRADE_FEE)), `${c.name} 주식 1주 팔기`);
   i.shares[cid]--;
   return null;
@@ -191,9 +193,26 @@ function botPrepare(st) {
 function botSpy(st) {
   const cs = companiesOf(st);
   st.seats.filter((s) => s.bot).forEach((s) => {
-    const chance = s.role === "investor" ? 0.4 : 0.2;
+    const chance = s.role === "investor" ? 0.4 : 0.5;
     const targets = cs.filter((c) => c.id !== s.id);
     if (RNG() < chance && s.coins >= SPY_COST + 100 && targets.length) spyOn(st, s.id, pick(targets).id);
+  });
+}
+
+// 2차 공장 준비: 봇은 조사로 알게 된 라이벌과 같은 제품이 겹치면 가끔 다른 제품으로 바꾼다.
+function botRevise(st) {
+  const ranked = rankedProducts(st);
+  companiesOf(st).filter((c) => c.bot).forEach((c) => {
+    const seen = st.spy[c.id];
+    if (!seen) return;
+    const rival = new Set();
+    Object.values(seen).forEach((info) => { if (!info.blocked) info.factories.forEach((f) => f.product && rival.add(f.product)); });
+    c.factories.forEach((f) => {
+      if (f.product && rival.has(f.product) && RNG() < 0.5) {
+        const alt = ranked.find((p) => p !== f.product && !rival.has(p)) || ranked.find((p) => p !== f.product);
+        if (alt) f.product = alt;
+      }
+    });
   });
 }
 
@@ -369,10 +388,13 @@ function settle(st) {
 
 function advance(st) {
   if (st.over) return;
-  if (st.phase === 0) { st.phase = 1; botPrepare(st); } // 봇은 새 단계가 열린 뒤에 행동한다
-  else if (st.phase === 1) { botSpy(st); st.phase = 2; botInvest(st); }
-  else if (st.phase === 2) { rollEvent(st); st.phase = 3; }
-  else if (st.phase === 3) { settle(st); st.phase = 4; }
+  const p = st.phase;
+  // 봇은 새 단계가 열린 뒤에 행동한다
+  if (p === PH.HINT) { st.phase = PH.BUILD1; botPrepare(st); } // 1차: 봇이 공장을 정한다
+  else if (p === PH.BUILD1) { st.phase = PH.BUILD2; botSpy(st); botRevise(st); } // 2차: 봇이 조사하고 고친다 (사람은 이 단계 동안 확인하고 고친다)
+  else if (p === PH.BUILD2) { st.phase = PH.STOCK; botInvest(st); }
+  else if (p === PH.STOCK) { rollEvent(st); st.phase = PH.EVENT; }
+  else if (p === PH.EVENT) { settle(st); st.phase = PH.RESULT; }
   else if (st.turn >= TOTAL_TURNS) st.over = true;
   else { st.turn++; startTurn(st); }
   st.ready = {};

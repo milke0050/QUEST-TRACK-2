@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=12";
+import { Store } from "./storage.js?v=13";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -268,7 +268,7 @@ function readyHtml() {
   const done = humans.filter((s) => state.ready[s.id]);
   const waiting = humans.filter((s) => !state.ready[s.id]).map((s) => esc(s.name));
   const isReady = !!state.ready[m.id];
-  const label = state.phase === 4 && state.turn >= TOTAL_TURNS ? "마치고 결과 보기" : "준비 완료";
+  const label = state.phase === PH.RESULT && state.turn >= TOTAL_TURNS ? "마치고 결과 보기" : "준비 완료";
   const btn = isReady
     ? `<button data-act="unready" class="big gray">✅ ${label} (눌러서 취소)</button>`
     : `<button data-act="ready" class="big green">${label} ▶</button>`;
@@ -279,7 +279,7 @@ function readyHtml() {
 
 function hintsHtml() {
   const h = state.hints;
-  const reveal = state.phase === 4 ? `<div class="hint"><strong>정세 발표:</strong> 이번엔 ${prod(state.truth)} 가 대박 제품이었어요!</div>` : "";
+  const reveal = state.phase === PH.RESULT ? `<div class="hint"><strong>정세 발표:</strong> 이번엔 ${prod(state.truth)} 가 대박 제품이었어요!</div>` : "";
   return `<section class="card"><h2>🌍 이번 턴 정세 힌트 <span class="muted">(모두에게 똑같이 보여요)</span></h2>
     <div class="hint">📡 <strong>공식 예보</strong> · ${HINT_TEXT[h.a][0]}</div>
     <div class="hint rumor">🗣️ <strong>소문</strong> · ${HINT_TEXT[h.b][1]}</div>
@@ -287,7 +287,7 @@ function hintsHtml() {
 }
 
 function eventHtml() {
-  if (state.phase < 3) return "";
+  if (state.phase < PH.EVENT) return "";
   const e = state.event;
   const body = e ? `<div class="event"><strong>🚨 ${e.title}</strong><br>${e.text}</div>` : `<div class="event none">오늘은 돌발 뉴스가 없어요. 평온한 하루예요 ☀️</div>`;
   return `<section class="card"><h2>돌발 뉴스</h2>${body}</section>`;
@@ -331,7 +331,7 @@ function spyHtml(viewerId) {
 
 function companiesHtml() {
   const m = me();
-  const boom = (c) => state.phase === 4 && state.result && state.result.companies[c.id].profit >= 200;
+  const boom = (c) => state.phase === PH.RESULT && state.result && state.result.companies[c.id].profit >= 200;
   const items = companiesOf(state).map((c) => {
     const isMine = c.id === m.id;
     const arrow = c.lastChange > 0 ? `<span class="up">▲${c.lastChange}</span>` : c.lastChange < 0 ? `<span class="down">▼${-c.lastChange}</span>` : "";
@@ -365,8 +365,13 @@ function spyBtn(m, c) {
 
 function companyPanelHtml() {
   const m = me(), ph = state.phase;
-  if (ph !== 1) {
-    const msg = ["정세 힌트를 읽고 어떤 제품이 잘 팔릴지 생각해 보세요.", "", "투자자들이 주식을 사고파는 중이에요. 우리 회사 주가가 어떻게 될까요?", "돌발 뉴스가 판을 흔들 수 있어요!", ""][ph];
+  const build1 = ph === PH.BUILD1, build2 = ph === PH.BUILD2;
+  if (!build1 && !build2) {
+    const msg = {
+      [PH.HINT]: "정세 힌트를 읽고 어떤 제품이 잘 팔릴지 생각해 보세요.",
+      [PH.STOCK]: "투자자들이 주식을 사고파는 중이에요. 우리 회사 주가가 어떻게 될까요?",
+      [PH.EVENT]: "돌발 뉴스가 판을 흔들 수 있어요!",
+    }[ph];
     return msg ? `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)}</h2><p>${msg}</p></section>` : "";
   }
   const facs = m.factories.map((f, i) => {
@@ -380,13 +385,22 @@ function companyPanelHtml() {
       ${up ? `<button class="small" data-act="upgrade" data-i="${i}" ${m.coins < up ? "disabled" : ""}>업그레이드 (${up}코인)</button>` : '<span class="tag">최고 레벨</span>'}</div>`;
   }).join("");
   const addBtn = m.factories.length < MAX_SLOTS ? `<button data-act="addfac" ${m.coins < NEW_SLOT_COST ? "disabled" : ""}>공장 더 짓기 (${NEW_SLOT_COST}코인)</button>` : "";
-  const secure = `<button data-act="secure" class="${m.secure ? "gray" : ""}" ${m.secure || m.coins < SECURE_COST ? "disabled" : ""}>${m.secure ? "🛡️ 비공개 생산 켜짐" : `🛡️ 비공개 생산 켜기 (${SECURE_COST}코인)`}</button>`;
-  const spies = companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("");
-  return `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(준비 단계)</span></h2>
-    <p class="muted">공장마다 만들 제품과 가격을 고르세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요.
-    같은 제품을 사려는 손님(수요)은 정해져 있어서 경쟁 공장끼리 나눠 가져요. 값이 싸고 공장 레벨(품질)이 높을수록 더 많이 가져와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.</p>
+
+  // 1차: 공장을 짓고 정하고, 비공개 생산을 켠다. 2차: 상대 공장을 조사하고 내 공장을 고친다.
+  const secure = build1
+    ? `<button data-act="secure" class="${m.secure ? "gray" : ""}" ${m.secure || m.coins < SECURE_COST ? "disabled" : ""}>${m.secure ? "🛡️ 비공개 생산 켜짐" : `🛡️ 비공개 생산 켜기 (${SECURE_COST}코인)`}</button>`
+    : `<p class="muted">${m.secure ? "🛡️ 비공개 생산이 켜져 있어요." : "🛡️ 비공개 생산은 1차 공장 준비에서만 켤 수 있어요."}</p>`;
+  const spies = build2
+    ? `<div><strong>🕵️ 다른 회사 조사</strong> <span class="muted">(모두 1차에서 공장을 정한 뒤라서 진짜 정보가 보여요)</span><br>${companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("")}</div>${spyHtml(m.id)}`
+    : `<p class="muted">🕵️ 다른 회사 조사는 2차 공장 준비에서 할 수 있어요. 지금은 모두가 공장을 정하는 중이에요.</p>`;
+  const help = build1
+    ? "1차 공장 준비: 공장을 짓고 만들 제품과 가격을 정하세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요. 다음 단계에서 상대 공장을 보고 고칠 수 있어요."
+    : "2차 공장 준비: 상대 공장을 조사해서 보고, 내 공장의 제품과 가격을 고쳐도 돼요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.";
+  return `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(${build1 ? "1차" : "2차"} 공장 준비)</span></h2>
+    <p class="muted">${help}<br>
+    같은 제품을 사려는 손님(수요)은 정해져 있어서 경쟁 공장끼리 나눠 가져요. 값이 싸고 공장 레벨(품질)이 높을수록 더 많이 가져와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요.</p>
     <div class="muted">📦 재고: ${invText(m)}</div>
-    ${facs}${addBtn}${secure}<div>${spies}</div>${spyHtml(m.id)}</section>${cardsHtml(m)}`;
+    ${facs}${addBtn}${secure}${spies}</section>${cardsHtml(m)}`;
 }
 
 function cardsHtml(m) {
@@ -402,18 +416,22 @@ function cardsHtml(m) {
 
 function investorPanelHtml() {
   const m = me(), ph = state.phase;
-  if (ph === 1) {
-    return `<section class="card"><h2>📈 투자자 · 정보 탐색 <span class="muted">(준비 단계)</span></h2>
-      <p class="muted">코인을 내고 회사의 공장과 가격을 몰래 조사할 수 있어요. 보안이 켜진 회사는 막혀요.</p>
+  if (ph === PH.BUILD2) {
+    return `<section class="card"><h2>📈 투자자 · 정보 탐색 <span class="muted">(2차 공장 준비)</span></h2>
+      <p class="muted">기업들이 1차 공장 준비를 마쳤어요. 코인을 내고 회사의 공장과 가격을 몰래 조사할 수 있어요. 보안이 켜진 회사는 막혀요. 기업이 2차에서 고칠 수 있으니 정보가 달라질 수도 있어요.</p>
       ${companiesOf(state).map((c) => spyBtn(m, c)).join("")}${spyHtml(m.id)}</section>`;
   }
-  if (ph === 2) {
+  if (ph === PH.STOCK) {
     const rows = companiesOf(state).map((c) => `<div class="row"><strong>${esc(c.name)}</strong> 주가 ${c.stock}코인 · 내 주식 ${m.shares[c.id] || 0}주 · 남은 주식 ${freeShares(state, c.id)}<br>
       <button class="green" data-act="buy" data-c="${c.id}" ${m.coins < buyCost(c) || freeShares(state, c.id) <= 0 ? "disabled" : ""}>1주 사기 (−${buyCost(c)})</button>
       <button data-act="sell" data-c="${c.id}" ${(m.shares[c.id] || 0) <= 0 ? "disabled" : ""}>1주 팔기 (+${sellGain(c)})</button></div>`).join("");
     return `<section class="card"><h2>📈 주식 베팅</h2><p class="muted">힌트와 조사 결과를 보고 투자할 회사를 고르세요. 사고팔 때마다 수수료 ${Math.round(TRADE_FEE * 100)}%가 붙어요.</p>${rows}${spyHtml(m.id)}</section>`;
   }
-  const msg = ["정세 힌트를 읽어 보세요. 어느 회사가 유리할까요?", "", "", "돌발 뉴스가 터질 수 있어요. 주식이 어떻게 될까요?", ""][ph];
+  const msg = {
+    [PH.HINT]: "정세 힌트를 읽어 보세요. 어느 회사가 유리할까요?",
+    [PH.BUILD1]: "기업들이 1차 공장 준비를 하는 중이에요. 조사는 다음 단계(2차 공장 준비)에서 할 수 있어요.",
+    [PH.EVENT]: "돌발 뉴스가 터질 수 있어요. 주식이 어떻게 될까요?",
+  }[ph];
   return msg ? `<section class="card"><h2>📈 투자자</h2><p>${msg}</p></section>` : "";
 }
 
@@ -435,7 +453,7 @@ function shareChartHtml(r, m) {
 }
 
 function resultHtml() {
-  if (state.phase !== 4 || !state.result) return "";
+  if (state.phase !== PH.RESULT || !state.result) return "";
   const r = state.result, m = me();
   const money = (n) => `<span class="${n >= 0 ? "plus" : "minus"}">${sign(n)}코인</span>`;
   const mine = r.gain[m.id];
