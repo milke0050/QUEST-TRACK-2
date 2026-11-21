@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=11";
+import { Store } from "./storage.js?v=12";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -350,9 +350,11 @@ function companiesHtml() {
 function seatsHtml() {
   const m = me();
   const rows = state.seats.map((s) => `<li><span>${s.role === "company" ? "🏭" : "📈"} ${esc(s.name)} ${s.uid && s.uid === room.hostUid ? "👑" : ""}</span>
-    <span>${m && s.id === m.id ? '<span class="tag me">나</span>' : s.bot ? '<span class="tag">봇</span>' : '<span class="tag">사람</span>'}
+    <span><strong class="asset">💰 ${assetOf(state, s)}</strong>
+    ${m && s.id === m.id ? '<span class="tag me">나</span>' : s.bot ? '<span class="tag">봇</span>' : '<span class="tag">사람</span>'}
     ${!s.bot && state.ready[s.id] ? "✅" : ""}</span></li>`).join("");
-  return `<section class="card"><h2>🚪 ${esc(room.name)} 방 · ${esc(room.code)}</h2><ul class="plain">${rows}</ul>
+  return `<section class="card"><h2>🚪 ${esc(room.name)} 방 · ${esc(room.code)}</h2>
+    <p class="muted">💰 = 지금 재산 (코인 + 주식 값 / 기업은 코인 + 공장에 쓴 돈)</p><ul class="plain">${rows}</ul>
     <button data-act="leave" class="gray small">${isHost() ? "방 닫기(모두 나가요)" : "방 나가기"}</button></section>`;
 }
 

@@ -49,3 +49,4 @@ ul.plain li { padding: 4px 0; border-bottom: 1px solid #eee; display: flex; flex
 .bar span { display: block; height: 100%; background: #2c6bd6; border-radius: 999px; }
 .barlabel { font-size: .9rem; }
 details summary { cursor: pointer; font-weight: bold; }
+.asset { color: #8a6500; margin-right: 4px; }

@@ -410,19 +410,22 @@ function tryAdvance(st) {
   return false;
 }
 
-// 마지막 순위: 코인 + 주식 값(투자자) / 코인 + 공장에 쓴 돈(기업)
+// 재산: 코인 + 주식 값(투자자) / 코인 + 공장에 쓴 돈(기업). 플레이어 목록과 마지막 순위에 쓴다.
+function assetOf(st, s) {
+  let worth = s.coins;
+  if (s.role === "investor") companiesOf(st).forEach((c) => (worth += (s.shares[c.id] || 0) * c.stock));
+  else {
+    s.factories.forEach((f, i) => { worth += (i > 0 ? NEW_SLOT_COST : 0) + (f.level >= 2 ? 200 : 0) + (f.level >= 3 ? 300 : 0); });
+    if (OWNER_SHARES_COUNT) worth += freeShares(st, s.id) * s.stock; // 안 팔린 주식은 회사 주인 몫
+  }
+  return worth;
+}
+
+// 마지막 순위
 function finalScores(st) {
-  return st.seats.map((s) => {
-    let worth = s.coins;
-    if (s.role === "investor") companiesOf(st).forEach((c) => (worth += (s.shares[c.id] || 0) * c.stock));
-    else {
-      s.factories.forEach((f, i) => { worth += (i > 0 ? NEW_SLOT_COST : 0) + (f.level >= 2 ? 200 : 0) + (f.level >= 3 ? 300 : 0); });
-      if (OWNER_SHARES_COUNT) worth += freeShares(st, s.id) * s.stock; // 안 팔린 주식은 회사 주인 몫
-    }
-    return { seat: s, worth };
-  }).sort((a, b) => b.worth - a.worth);
+  return st.seats.map((s) => ({ seat: s, worth: assetOf(st, s) })).sort((a, b) => b.worth - a.worth);
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { allocateDemand, newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, useCard, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
+  module.exports = { assetOf, allocateDemand, newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, useCard, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
 }
