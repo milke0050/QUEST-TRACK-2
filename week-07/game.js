@@ -1,4 +1,5 @@
 // 게임 규칙과 봇. 화면 코드는 여기 없다. (data.js 가 먼저 불러와져야 한다)
+// 여러 명이 함께 할 때는 방장의 브라우저가 이 규칙으로 판을 진행하고, 결과를 방(Firestore)에 적는다.
 let RNG = Math.random; // 시험할 때 바꿔 끼울 수 있다
 const pick = (arr) => arr[Math.floor(RNG() * arr.length)];
 const seatOf = (st, id) => st.seats.find((s) => s.id === id);
@@ -7,32 +8,42 @@ const investorsOf = (st) => st.seats.filter((s) => s.role === "investor");
 const heldShares = (st, cid) => investorsOf(st).reduce((n, i) => n + (i.shares[cid] || 0), 0);
 const freeShares = (st, cid) => SHARES - heldShares(st, cid);
 
-// 코인을 바꾸는 곳은 여기 하나. 내 자리면 거래 기록(1번 기능)에 남긴다.
+// 코인을 바꾸는 곳은 여기 하나. 사람 자리면 그 사람의 거래 기록(1번 기능)에 남긴다.
 function addCoins(st, seat, amount, reason) {
   const before = seat.coins;
   seat.coins = Math.max(0, seat.coins + amount);
-  if (seat.id === st.room.mySeat && seat.coins !== before) {
-    st.log.unshift({ amount: seat.coins - before, reason, coins: seat.coins });
-    st.log = st.log.slice(0, 30);
+  if (!seat.bot && seat.coins !== before) {
+    seat.log = seat.log || [];
+    seat.log.unshift({ amount: seat.coins - before, reason, coins: seat.coins });
+    seat.log = seat.log.slice(0, 30);
   }
 }
 
-function newGame(roomName, myRole) {
-  const company = (id, name) => ({
-    id, role: "company", name, bot: true, coins: START_COINS,
+// humans: [{uid, nickname, role}] (사람 최대 8명). 모자란 자리는 봇이 채운다.
+function newGame(roomName, humans) {
+  const comp = humans.filter((h) => h.role === "company");
+  const inv = humans.filter((h) => h.role !== "company");
+  while (comp.length > MAX_PER_ROLE) inv.push(comp.pop()); // 자리가 넘치면 반대 역할로
+  while (inv.length > MAX_PER_ROLE) comp.push(inv.pop());
+
+  const company = (id, name, uid) => ({
+    id, role: "company", name, uid: uid || null, bot: !uid, coins: START_COINS,
     factories: [{ level: 1, product: null, price: "mid" }],
-    secure: false, stock: START_STOCK, lastChange: 0,
+    secure: false, stock: START_STOCK, lastChange: 0, log: [],
   });
-  const investor = (id, name) => ({
-    id, role: "investor", name, bot: true, coins: START_COINS, shares: { c1: 0, c2: 0 },
+  const seats = [];
+  comp.forEach((h, k) => seats.push(company("c" + (k + 1), `${h.nickname}의 회사`, h.uid)));
+  for (let k = comp.length; k < MIN_PER_ROLE; k++) seats.push(company("c" + (k + 1), BOT_COMPANY_NAMES[k]));
+
+  const shares = {};
+  seats.forEach((c) => (shares[c.id] = 0));
+  const investor = (id, name, uid) => ({
+    id, role: "investor", name, uid: uid || null, bot: !uid, coins: START_COINS, shares: { ...shares }, log: [],
   });
-  const st = {
-    version: 1,
-    room: { name: roomName, mySeat: myRole === "company" ? "c1" : "i1" },
-    seats: [company("c1", "햇살상회"), company("c2", "푸른공방"), investor("i1", "투자자 1"), investor("i2", "투자자 2")],
-    turn: 1, phase: 0, over: false, log: [],
-  };
-  seatOf(st, st.room.mySeat).bot = false;
+  inv.forEach((h, k) => seats.push(investor("i" + (k + 1), h.nickname, h.uid)));
+  for (let k = inv.length; k < MIN_PER_ROLE; k++) seats.push(investor("i" + (k + 1), BOT_INVESTOR_NAMES[k]));
+
+  const st = { version: 2, room: { name: roomName }, seats, turn: 1, phase: 0, over: false, ready: {}, applied: [] };
   startTurn(st);
   return st;
 }
@@ -45,7 +56,7 @@ function startTurn(st) {
     a: RNG() < 0.75 ? st.truth : pick(others), // 공식 예보: 자주 맞음
     b: RNG() < 0.5 ? st.truth : pick(others), // 소문: 더 자주 틀림
   };
-  st.event = null; st.spy = {}; st.result = null; st.news = []; st.phase = 0;
+  st.event = null; st.spy = {}; st.result = null; st.news = []; st.phase = 0; st.ready = {};
   companiesOf(st).forEach((c) => (c.secure = false));
 }
 
@@ -84,19 +95,20 @@ function toggleSecure(st, cid) {
 }
 
 // 비밀 조사: 코인을 내고 다른 회사의 공장 제품과 가격을 훔쳐본다.
+// 소식(news)은 누구에게 온 것인지 seat 로 구분한다.
 function spyOn(st, spyId, targetId) {
   const s = seatOf(st, spyId), t = seatOf(st, targetId);
-  if (need(st, 1) || spyId === targetId) return "지금은 조사할 수 없어요.";
+  if (need(st, 1) || spyId === targetId || !t || t.role !== "company") return "지금은 조사할 수 없어요.";
   st.spy[spyId] = st.spy[spyId] || {};
   if (st.spy[spyId][targetId]) return "이미 조사했어요.";
   if (s.coins < SPY_COST) return "코인이 모자라요.";
   addCoins(st, s, -SPY_COST, `${t.name} 조사`);
   if (t.secure) {
     st.spy[spyId][targetId] = { blocked: true };
-    if (t.id === st.room.mySeat) st.news.push(`🛡️ ${s.name}가 우리 회사를 조사했지만 보안으로 막았어요.`);
+    st.news.push({ seat: t.id, text: `🛡️ ${s.name} 님이 우리 회사를 조사했지만 보안으로 막았어요.` });
   } else {
     st.spy[spyId][targetId] = { factories: t.factories.map((f) => ({ product: f.product, price: f.price })) };
-    if (t.id === st.room.mySeat) st.news.push(`👀 ${s.name}가 우리 회사의 공장 정보를 훔쳐봤어요!`);
+    st.news.push({ seat: t.id, text: `👀 ${s.name} 님이 우리 회사의 공장 정보를 훔쳐봤어요!` });
   }
   return null;
 }
@@ -148,16 +160,16 @@ function botPrepare(st) {
     if (c.coins > 300 && RNG() < 0.3) toggleSecure(st, c.id);
   });
 }
+
 function botSpy(st) {
   const cs = companiesOf(st);
   st.seats.filter((s) => s.bot).forEach((s) => {
     const chance = s.role === "investor" ? 0.4 : 0.2;
-    if (RNG() < chance && s.coins >= SPY_COST + 100) {
-      const targets = cs.filter((c) => c.id !== s.id);
-      spyOn(st, s.id, pick(targets).id);
-    }
+    const targets = cs.filter((c) => c.id !== s.id);
+    if (RNG() < chance && s.coins >= SPY_COST + 100 && targets.length) spyOn(st, s.id, pick(targets).id);
   });
 }
+
 function botInvest(st) {
   const score = hintScore(st);
   investorsOf(st).filter((i) => i.bot).forEach((i) => {
@@ -257,6 +269,38 @@ function advance(st) {
   else if (st.phase === 3) { settle(st); st.phase = 4; }
   else if (st.turn >= TOTAL_TURNS) st.over = true;
   else { st.turn++; startTurn(st); }
+  st.ready = {};
+}
+
+// ---------- 여러 명이 함께 할 때: 사람이 보낸 행동을 판에 적용 ----------
+// 방장의 브라우저만 이 함수를 부른다. 보낸 사람(uid)이 정말 그 자리의 주인인지 여기서 확인한다.
+function applyAction(st, uid, a) {
+  const s = st.seats.find((x) => x.uid === uid && !x.bot);
+  if (!s) return;
+  if (a.type === "leave") { s.bot = true; s.uid = null; delete st.ready[s.id]; return; } // 나가면 봇이 이어받는다
+  if (a.turn !== st.turn || a.phase !== st.phase) return; // 이미 지난 단계의 행동은 무시
+  const isCo = s.role === "company", isInv = s.role === "investor";
+  const cid = a.c, validCo = companiesOf(st).some((c) => c.id === cid);
+  switch (a.type) {
+    case "setFactory":
+      if (isCo && Number.isInteger(a.i) && PRICES[a.price] && (!a.product || PRODUCTS[a.product])) setFactory(st, s.id, a.i, a.product, a.price);
+      break;
+    case "upgrade": if (isCo && Number.isInteger(a.i)) upgradeFactory(st, s.id, a.i); break;
+    case "addfac": if (isCo) addFactory(st, s.id); break;
+    case "secure": if (isCo) toggleSecure(st, s.id); break;
+    case "spy": if (validCo) spyOn(st, s.id, cid); break;
+    case "buy": if (isInv && validCo) buyShare(st, s.id, cid); break;
+    case "sell": if (isInv && validCo) sellShare(st, s.id, cid); break;
+    case "ready": st.ready[s.id] = true; break;
+    case "unready": delete st.ready[s.id]; break;
+  }
+}
+
+// 사람이 모두 "준비 완료"를 누르면 다음 단계로 넘어간다.
+function tryAdvance(st) {
+  const humans = st.seats.filter((s) => !s.bot);
+  if (!st.over && humans.length && humans.every((s) => st.ready[s.id])) { advance(st); return true; }
+  return false;
 }
 
 // 마지막 순위: 코인 + 주식 값(투자자) / 코인 + 공장에 쓴 돈(기업)
@@ -270,5 +314,5 @@ function finalScores(st) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { newGame, advance, setFactory, upgradeFactory, addFactory, toggleSecure, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
+  module.exports = { newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
 }

@@ -45,3 +45,9 @@ const EVENTS = {
   regulation: { title: "🌿 환경 규제!", text: "레벨 2 이상 공장의 유지비가 2배!" },
   niche: { title: "🔥 틈새 트렌드 폭발!", text: "" }, // 글은 게임에서 제품 이름을 넣어 만든다
 };
+
+// 방(여러 명이 함께 하기)
+const MAX_PER_ROLE = 4; // 기업 4자리 + 투자자 4자리 = 사람 최대 8명
+const MIN_PER_ROLE = 2; // 사람이 모자라면 봇이 들어와서 역할마다 최소 2자리를 채운다
+const BOT_COMPANY_NAMES = ["햇살상회", "푸른공방", "바람상점", "별빛제작소"];
+const BOT_INVESTOR_NAMES = ["투자봇 가", "투자봇 나", "투자봇 다", "투자봇 라"];

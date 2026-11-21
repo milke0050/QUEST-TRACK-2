@@ -1,15 +1,25 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
+// 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
+// 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
 import { Store } from "./storage.js";
 
-let state = null; // 내 판 상태 (로그인 뒤에 Firestore 에서 불러온다)
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
+let roomCode = null; // 지금 들어가 있는 방 코드
+let room = null; // 방 정보 (rooms/{코드})
+let members = []; // 방에 들어온 사람들 (시작 전에 쓴다)
+let state = null; // 판 상태 (시작 뒤)
+let unsubs = [];
+let actionsWatching = false;
+let hostBusy = Promise.resolve();
 let flash = "";
+
 const app = document.getElementById("app");
 const loginSlot = document.getElementById("login-slot");
 const errorBox = document.getElementById("error");
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const me = () => seatOf(state, state.room.mySeat);
+const me = () => (state ? state.seats.find((s) => s.uid === auth.uid && !s.bot) : undefined);
+const isHost = () => !!room && room.hostUid === auth.uid;
 const prod = (p) => (p ? `${PRODUCTS[p].icon} ${PRODUCTS[p].name}` : "쉬는 공장");
 const tierText = (t) => `${PRICES[t].label} ${PRICES[t].price}`;
 const sign = (n) => (n > 0 ? "+" + n : String(n));
@@ -24,8 +34,9 @@ function errText(e) {
     "auth/unauthorized-domain": "이 주소가 Firebase 의 '승인된 도메인'에 없어요. 콘솔에서 추가해 주세요.",
     "auth/operation-not-allowed": "Firebase 콘솔에서 Google 로그인이 켜져 있지 않아요.",
     "auth/network-request-failed": "인터넷 연결을 확인해 주세요.",
-    "permission-denied": "저장 권한이 없어요. 보안 규칙을 콘솔에 붙여 넣었는지 확인해 주세요.",
+    "permission-denied": "권한이 없어요. 보안 규칙을 콘솔에 붙여 넣었는지, 시작한 방은 아닌지 확인해 주세요.",
     "unavailable": "서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요.",
+    "app/message": (e && e.message) || "",
   };
   return map[code] || `${code || "알 수 없는 오류"} ${(e && e.message) || ""}`.trim();
 }
@@ -36,18 +47,6 @@ function showError(prefix, e) {
 }
 function clearError() { errorBox.hidden = true; errorBox.textContent = ""; }
 
-// ---------- 저장 ----------
-function persist() {
-  if (auth.status !== "in" || !state) return;
-  Store.saveGame(auth.uid, auth.nickname, state).then(clearError).catch((e) => showError("저장에 실패했어요", e));
-}
-
-function commit(msg) {
-  flash = msg || "";
-  persist();
-  render();
-}
-
 // ---------- 로그인 ----------
 async function afterLogin(uid) {
   auth = { status: "loading", uid, nickname: "" };
@@ -56,9 +55,9 @@ async function afterLogin(uid) {
     const prof = await Store.loadProfile(uid);
     if (!prof) { auth.status = "needNick"; render(); return; }
     auth.nickname = prof.nickname;
-    state = await Store.loadGame(uid);
     auth.status = "in";
     clearError();
+    if (prof.roomCode) enterRoom(prof.roomCode); // 하던 방이 있으면 이어서
   } catch (e) {
     auth.status = "error";
     showError("불러오기에 실패했어요", e);
@@ -68,9 +67,110 @@ async function afterLogin(uid) {
 
 Store.onUser((u) => {
   if (u) afterLogin(u.uid);
-  else { auth = { status: "out", uid: null, nickname: "" }; state = null; render(); }
+  else { stopWatching(); auth = { status: "out", uid: null, nickname: "" }; resetRoomVars(); render(); }
 });
 
+// ---------- 방 들어가기 / 나가기 ----------
+function stopWatching() { unsubs.forEach((f) => f()); unsubs = []; actionsWatching = false; }
+function resetRoomVars() { roomCode = null; room = null; members = []; state = null; }
+
+function enterRoom(code) {
+  stopWatching();
+  resetRoomVars();
+  roomCode = code;
+  unsubs.push(Store.watchRoom(code, onRoom, (e) => showError("방을 불러오지 못했어요", e)));
+  unsubs.push(Store.watchMembers(code, (list) => { members = list; render(); }, (e) => showError("사람 목록을 불러오지 못했어요", e)));
+}
+
+function leaveLocal(msg) {
+  stopWatching();
+  resetRoomVars();
+  flash = msg || "";
+  if (auth.uid) Store.setMyRoom(auth.uid, null).catch(() => {});
+  render();
+}
+
+function onRoom(data) {
+  if (!data) { leaveLocal("방이 없어졌어요."); return; }
+  room = data;
+  // 방장은 자기 컴퓨터의 판이 가장 최신이라, 처음 불러올 때만 방의 판을 받는다.
+  if (data.stateJson && !(isHost() && state)) {
+    try { state = JSON.parse(data.stateJson); } catch (e) { showError("판을 읽지 못했어요", e); }
+  }
+  if (!data.stateJson) state = null;
+  if (isHost() && data.status === "playing" && !actionsWatching) startActionWatch();
+  render();
+}
+
+// ---------- 방장: 행동 쪽지를 읽어 판에 적용 ----------
+function startActionWatch() {
+  actionsWatching = true;
+  unsubs.push(Store.watchActions(roomCode, (list) => hostProcess(list), (e) => showError("행동을 받지 못했어요", e)));
+}
+
+function hostProcess(list) {
+  hostBusy = hostBusy.then(async () => {
+    if (!isHost() || !state) return;
+    const doneIds = [];
+    let changed = false;
+    for (const a of list) {
+      if (!a.local) doneIds.push(a.id);
+      if (state.applied.includes(a.id)) continue;
+      try { applyAction(state, a.uid, a); } catch (e) { console.error("행동 처리 실패", e); }
+      state.applied = [...state.applied, a.id].slice(-200);
+      changed = true;
+    }
+    if (changed) {
+      tryAdvance(state);
+      render();
+      try { await Store.saveRoomState(roomCode, state); clearError(); }
+      catch (e) { showError("저장에 실패했어요", e); return; }
+    }
+    if (doneIds.length) Store.deleteActions(roomCode, doneIds).catch(() => {});
+  });
+}
+
+// 내 행동 보내기: 방장이면 바로 적용, 아니면 쪽지로 보낸다.
+function send(type, args = {}) {
+  if (!state || !me()) return;
+  const a = { type, ...args, turn: state.turn, phase: state.phase };
+  if (isHost()) hostProcess([{ id: "local-" + Date.now() + "-" + Math.random(), uid: auth.uid, local: true, ...a }]);
+  else Store.sendAction(roomCode, auth.uid, a).catch((e) => showError("행동을 보내지 못했어요", e));
+}
+
+function forceAdvance() {
+  hostBusy = hostBusy.then(async () => {
+    if (!isHost() || !state) return;
+    advance(state);
+    render();
+    try { await Store.saveRoomState(roomCode, state); clearError(); } catch (e) { showError("저장에 실패했어요", e); }
+  });
+}
+
+async function startGame() {
+  try {
+    const humans = members.map((m) => ({ uid: m.uid, nickname: m.nickname, role: m.role }));
+    state = newGame(room.name, humans);
+    await Store.saveRoomState(roomCode, state);
+    clearError();
+  } catch (e) { state = null; showError("게임을 시작하지 못했어요", e); }
+  render();
+}
+
+async function leaveRoom() {
+  const code = roomCode;
+  try {
+    if (isHost()) await Store.deleteRoom(code);
+    else {
+      const st = state;
+      if (st && !st.over && me()) await Store.sendAction(code, auth.uid, { type: "leave" });
+      await Store.leaveMember(code, auth.uid);
+    }
+  } catch (e) { showError("방을 나가지 못했어요", e); return; }
+  leaveLocal("");
+}
+
+// ---------- 화면 조각 ----------
 function loginSlotHtml() {
   if (auth.status === "in") return `<span>😀 ${esc(auth.nickname)}</span> <button class="small gray" data-act="logout">로그아웃</button>`;
   if (auth.status === "out" || auth.status === "error") return `<button class="small" data-act="login">Google 로 로그인</button>`;
@@ -80,7 +180,7 @@ function loginSlotHtml() {
 function loginScreenHtml() {
   if (auth.status === "loading") return `<section class="card"><p>불러오는 중…</p></section>`;
   if (auth.status === "out") return `<section class="card"><h2>로그인하면 열리는 내 사이트</h2>
-    <p>Google 로 로그인하면 내 게임이 저장돼서, 어느 기기에서 열어도 이어서 할 수 있어요.</p>
+    <p>Google 로 로그인하면 친구들과 같은 방에서 함께 게임할 수 있어요.</p>
     <p class="muted">Google 이름과 메일은 저장하지 않아요. 내가 정한 별명만 저장돼요.</p>
     <button data-act="login" class="big green">Google 로 로그인</button></section>`;
   if (auth.status === "needNick") return `<section class="card"><h2>별명을 정해 주세요</h2>
@@ -91,24 +191,29 @@ function loginScreenHtml() {
     <button data-act="retry" class="big">다시 불러오기</button></section>`;
 }
 
-// ---------- 화면 조각 ----------
-function lobbyHtml() {
+function noRoomHtml() {
   return `
   <section class="card">
     <h2>방 만들기</h2>
-    <p class="muted">방을 만들고 내가 앉을 자리를 고르세요. 비는 자리는 봇이 채워요.<br>
-    (방과 게임은 내 계정에 저장돼서 어느 기기에서 열어도 이어서 할 수 있어요. 다른 사람이 같은 방에 들어오는 건 아직 못 해요.)</p>
+    <p class="muted">방을 만들면 6글자 코드가 생겨요. 친구에게 코드를 알려 주세요. 사람은 최대 ${MAX_PER_ROLE * 2}명이고, 사람이 모자라면 봇이 들어와요.</p>
     <p><label>방 이름 <input type="text" id="room-name" value="우리 방" maxlength="12"></label></p>
     <p>
       <label><input type="radio" name="role" value="company" checked> 🏭 기업 플레이어 (공장을 운영해요)</label><br>
       <label><input type="radio" name="role" value="investor"> 📈 투자자 플레이어 (주식을 사고팔아요)</label>
     </p>
-    <button data-act="create" class="big green">방 만들고 시작하기</button>
+    <button data-act="create" class="big green">방 만들기</button>
+  </section>
+  <section class="card">
+    <h2>코드로 방 들어가기</h2>
+    <p><input type="text" id="join-code" maxlength="6" placeholder="예: K7M2QX" style="text-transform:uppercase"></p>
+    <p class="muted">들어갈 때 위에서 고른 역할(기업/투자자)로 앉아요.</p>
+    <button data-act="join" class="big">들어가기</button>
   </section>
   <section class="card">
     <h2>게임 규칙 한눈에</h2>
     <ul class="plain">
       <li>턴마다 정세 힌트를 읽고, 기업은 공장과 가격을 정하고, 투자자는 주식을 사요.</li>
+      <li>사람이 모두 "준비 완료"를 누르면 다음 단계로 넘어가요.</li>
       <li>정세에 맞는 제품을 만든 회사가 많이 팔고, 주가가 올라요.</li>
       <li>${TOTAL_TURNS}턴이 끝났을 때 가진 코인과 주식이 가장 많은 쪽이 이겨요.</li>
     </ul>
@@ -116,14 +221,46 @@ function lobbyHtml() {
   <div id="join-slot" class="slot-empty"></div>`;
 }
 
+function roomLobbyHtml() {
+  const mine = members.find((m) => m.uid === auth.uid);
+  const count = (r) => members.filter((m) => m.role === r).length;
+  const rows = ["company", "investor"].map((r) => {
+    const list = members.filter((m) => m.role === r);
+    const label = r === "company" ? "🏭 기업" : "📈 투자자";
+    const bots = Math.max(0, MIN_PER_ROLE - list.length);
+    return `<li><span>${label} (${list.length}/${MAX_PER_ROLE})</span><span>${list.map((m) => esc(m.nickname) + (m.uid === room.hostUid ? " 👑" : "")).join(", ") || "-"}${bots ? ` <span class="tag">봇 ${bots}명 들어옴</span>` : ""}</span></li>`;
+  }).join("");
+  const roleBtn = (r, text) => `<button data-act="role" data-role="${r}" class="${mine && mine.role === r ? "green" : "gray"}" ${count(r) >= MAX_PER_ROLE && !(mine && mine.role === r) ? "disabled" : ""}>${text}</button>`;
+  const start = isHost()
+    ? `<button data-act="start" class="big green">게임 시작 (사람 ${members.length}명${members.length ? "" : ""})</button>`
+    : `<p class="muted">방장이 시작하기를 기다리고 있어요…</p>`;
+  return `<section class="card"><h2>🚪 ${esc(room.name)} 방</h2>
+    <p>방 코드 <strong style="font-size:1.6rem;letter-spacing:.15em">${esc(room.code)}</strong></p>
+    <p class="muted">친구에게 이 코드를 알려 주세요. 시작하면 새로 들어올 수 없어요.</p>
+    <ul class="plain">${rows}</ul>
+    <p>내 역할 바꾸기: ${roleBtn("company", "🏭 기업")} ${roleBtn("investor", "📈 투자자")}</p>
+    ${start}
+    <button data-act="leave" class="gray small">${isHost() ? "방 닫기" : "방 나가기"}</button></section>`;
+}
+
 function trackHtml() {
   const steps = PHASE_NAMES.map((n, i) => `<span class="step ${i < state.phase ? "done" : i === state.phase ? "now" : ""}">${i + 1}. ${n}</span>`).join("");
   return `<div class="track"><strong>턴 ${state.turn} / ${TOTAL_TURNS}</strong> ${steps}</div>`;
 }
 
-function nextBtnHtml() {
-  const labels = ["기업 준비로 ▶", "주식 베팅으로 ▶", "돌발 뉴스 확인 ▶", "결과 정산 ▶", state.turn >= TOTAL_TURNS ? "게임 결과 보기 🏆" : "다음 턴으로 ▶"];
-  return `<button data-act="next" class="big green">${labels[state.phase]}</button>`;
+function readyHtml() {
+  const m = me();
+  const humans = state.seats.filter((s) => !s.bot);
+  const done = humans.filter((s) => state.ready[s.id]);
+  const waiting = humans.filter((s) => !state.ready[s.id]).map((s) => esc(s.name));
+  const isReady = !!state.ready[m.id];
+  const label = state.phase === 4 && state.turn >= TOTAL_TURNS ? "마치고 결과 보기" : "준비 완료";
+  const btn = isReady
+    ? `<button data-act="unready" class="big gray">✅ ${label} (눌러서 취소)</button>`
+    : `<button data-act="ready" class="big green">${label} ▶</button>`;
+  const wait = waiting.length ? `<div class="muted">기다리는 중: ${waiting.join(", ")}</div>` : "";
+  const force = isHost() && waiting.length ? `<button data-act="force" class="small gray">기다리지 않고 넘기기 (방장)</button>` : "";
+  return `${btn}<div class="muted">준비 ${done.length}/${humans.length}명</div>${wait}${force}`;
 }
 
 function hintsHtml() {
@@ -149,8 +286,9 @@ function walletHtml() {
     const stocks = companiesOf(state).reduce((n, c) => n + (m.shares[c.id] || 0) * c.stock, 0);
     worth = `<div class="muted">가진 주식 값 ${stocks}코인 · 합계 ${m.coins + stocks}코인</div>`;
   }
-  const rows = state.log.length
-    ? state.log.slice(0, 8).map((l) => `<li><span>${esc(l.reason)}</span><span class="${l.amount >= 0 ? "plus" : "minus"}">${sign(l.amount)} → ${l.coins}코인</span></li>`).join("")
+  const log = m.log || [];
+  const rows = log.length
+    ? log.slice(0, 8).map((l) => `<li><span>${esc(l.reason)}</span><span class="${l.amount >= 0 ? "plus" : "minus"}">${sign(l.amount)} → ${l.coins}코인</span></li>`).join("")
     : '<li class="muted">아직 거래가 없어요.</li>';
   return `<section class="card"><h2>💰 내 코인</h2><div class="coins">${m.coins} 코인</div>${worth}
     <strong>거래 기록</strong><ul class="plain">${rows}</ul></section>`;
@@ -191,10 +329,17 @@ function companiesHtml() {
 }
 
 function seatsHtml() {
-  const rows = state.seats.map((s) => `<li><span>${s.role === "company" ? "🏭" : "📈"} ${esc(s.name)}</span>
-    <span>${s.id === state.room.mySeat ? '<span class="tag me">나</span>' : '<span class="tag">봇</span>'}</span></li>`).join("");
-  return `<section class="card"><h2>🚪 ${esc(state.room.name)} 방</h2><ul class="plain">${rows}</ul>
-    <button data-act="leave" class="gray small">방 나가기(새 게임)</button></section>`;
+  const m = me();
+  const rows = state.seats.map((s) => `<li><span>${s.role === "company" ? "🏭" : "📈"} ${esc(s.name)} ${s.uid && s.uid === room.hostUid ? "👑" : ""}</span>
+    <span>${m && s.id === m.id ? '<span class="tag me">나</span>' : s.bot ? '<span class="tag">봇</span>' : '<span class="tag">사람</span>'}
+    ${!s.bot && state.ready[s.id] ? "✅" : ""}</span></li>`).join("");
+  return `<section class="card"><h2>🚪 ${esc(room.name)} 방 · ${esc(room.code)}</h2><ul class="plain">${rows}</ul>
+    <button data-act="leave" class="gray small">${isHost() ? "방 닫기(모두 나가요)" : "방 나가기"}</button></section>`;
+}
+
+function spyBtn(m, c) {
+  const done = state.spy[m.id] && state.spy[m.id][c.id];
+  return `<button data-act="spy" data-c="${c.id}" class="${done ? "gray" : ""}" ${done || m.coins < SPY_COST ? "disabled" : ""}>🕵️ ${esc(c.name)} 조사 (${SPY_COST}코인)</button>`;
 }
 
 function companyPanelHtml() {
@@ -221,11 +366,6 @@ function companyPanelHtml() {
     ${facs}${addBtn}${secure}<div>${spies}</div>${spyHtml(m.id)}</section>`;
 }
 
-function spyBtn(m, c) {
-  const done = state.spy[m.id] && state.spy[m.id][c.id];
-  return `<button data-act="spy" data-c="${c.id}" class="${done ? "gray" : ""}" ${done || m.coins < SPY_COST ? "disabled" : ""}>🕵️ ${esc(c.name)} 조사 (${SPY_COST}코인)</button>`;
-}
-
 function investorPanelHtml() {
   const m = me(), ph = state.phase;
   if (ph === 1) {
@@ -245,7 +385,7 @@ function investorPanelHtml() {
 
 function resultHtml() {
   if (state.phase !== 4 || !state.result) return "";
-  const r = state.result;
+  const r = state.result, m = me();
   const blocks = companiesOf(state).map((c) => {
     const x = r.companies[c.id];
     const rows = x.rows.map((w) => w.idle
@@ -257,7 +397,7 @@ function resultHtml() {
       <div>유지비 −${x.upkeep} → <strong class="${x.profit >= 0 ? "plus" : "minus"}">이번 턴 이익 ${sign(x.profit)}코인</strong></div>
       <div>주가 ${x.stockFrom} → <span class="${x.stockTo >= x.stockFrom ? "up" : "down"}">${x.stockTo}</span>${x.perShare ? ` · 1주당 배당 ${x.perShare}코인` : ""}</div></div>`;
   }).join("");
-  const myDiv = r.dividends[state.room.mySeat] ? `<p class="plus">내가 받은 배당금 +${r.dividends[state.room.mySeat]}코인 🎁</p>` : "";
+  const myDiv = r.dividends[m.id] ? `<p class="plus">내가 받은 배당금 +${r.dividends[m.id]}코인 🎁</p>` : "";
   return `<section class="card"><h2>📊 결과 정산</h2>
     <p>정세 발표: ${prod(r.truth)}${r.event ? ` · 돌발: ${r.event.title}` : ""}</p>
     <p class="formula">판매 공식 · 판매량 = 작은 쪽(생산 능력, 제품 수요 × 내 가격 몫)<br>내 가격 몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합 (저가 3 · 적정가 2 · 고가 1)</p>
@@ -265,18 +405,19 @@ function resultHtml() {
 }
 
 function newsHtml() {
-  const msgs = [...(state.news || [])];
+  const m = me();
+  const msgs = (state.news || []).filter((n) => n.seat === m.id).map((n) => n.text);
   return msgs.length ? `<div class="toast">${msgs.map(esc).join("<br>")}</div>` : "";
 }
 
 function overHtml() {
-  const scores = finalScores(state);
-  const rows = scores.map((x, i) => `<li><span>${i + 1}위 ${x.seat.role === "company" ? "🏭" : "📈"} ${esc(x.seat.name)} ${x.seat.id === state.room.mySeat ? '<span class="tag me">나</span>' : ""}</span><strong>${x.worth}코인</strong></li>`).join("");
-  const mine = scores.findIndex((x) => x.seat.id === state.room.mySeat) + 1;
-  return `<section class="card"><h2>🏆 게임 끝!</h2><p>나는 ${scores.length}명 중 <strong>${mine}위</strong>였어요.</p>
+  const scores = finalScores(state), m = me();
+  const rows = scores.map((x, i) => `<li><span>${i + 1}위 ${x.seat.role === "company" ? "🏭" : "📈"} ${esc(x.seat.name)} ${m && x.seat.id === m.id ? '<span class="tag me">나</span>' : x.seat.bot ? '<span class="tag">봇</span>' : ""}</span><strong>${x.worth}코인</strong></li>`).join("");
+  const mine = m ? scores.findIndex((x) => x.seat.id === m.id) + 1 : 0;
+  return `<section class="card"><h2>🏆 게임 끝!</h2>${mine ? `<p>나는 ${scores.length}명 중 <strong>${mine}위</strong>였어요.</p>` : ""}
     <ul class="plain">${rows}</ul>
     <p class="muted">순위 값 = 코인 + (투자자: 가진 주식 값 / 기업: 공장에 쓴 돈)</p>
-    <button data-act="leave" class="big green">새 게임 하기</button></section>`;
+    <button data-act="leave" class="big green">${isHost() ? "방 닫고 새 게임 하기" : "방 나가기"}</button></section>`;
 }
 
 // ---------- 전체 그리기 ----------
@@ -285,11 +426,21 @@ function render() {
   flash = "";
   loginSlot.innerHTML = loginSlotHtml();
   if (auth.status !== "in") { app.innerHTML = loginScreenHtml(); return; }
-  if (!state) { app.innerHTML = toast + lobbyHtml(); return; }
-  if (state.over) { app.innerHTML = overHtml(); return; }
+  if (!roomCode) { app.innerHTML = toast + noRoomHtml(); return; }
+  if (!room) { app.innerHTML = toast + `<section class="card"><p>방을 불러오는 중…</p></section>`; return; }
+  if (room.status === "lobby" || !state) {
+    app.innerHTML = toast + (room.status === "lobby" ? roomLobbyHtml() : `<section class="card"><p>판을 불러오는 중…</p></section>`);
+    return;
+  }
   const m = me();
+  if (!m) {
+    app.innerHTML = toast + `<section class="card"><h2>자리가 없어요</h2><p>이 방에서 나갔거나, 시작할 때 들어와 있지 않았어요.</p>
+      <button data-act="leave" class="big gray">방 나가기</button></section>`;
+    return;
+  }
+  if (state.over) { app.innerHTML = overHtml(); return; }
   const panel = m.role === "company" ? companyPanelHtml() : investorPanelHtml();
-  app.innerHTML = `${toast}${trackHtml()}${nextBtnHtml()}${newsHtml()}
+  app.innerHTML = `${toast}${trackHtml()}${readyHtml()}${newsHtml()}
     <div class="cols" style="margin-top:12px">
       <div>${hintsHtml()}${eventHtml()}${panel}${resultHtml()}</div>
       <div>${walletHtml()}${companiesHtml()}${seatsHtml()}</div>
@@ -297,9 +448,6 @@ function render() {
 }
 
 // ---------- 누르기 / 고르기 ----------
-function run(fn) { const err = fn(); commit(err || ""); }
-
-// 로그인·로그아웃·별명 단추 (로그인 단추는 누르는 순간 바로 팝업을 열어야 막히지 않는다)
 async function authAction(act) {
   try {
     if (act === "login") { await Store.login(); }
@@ -307,7 +455,7 @@ async function authAction(act) {
     else if (act === "retry") { await afterLogin(auth.uid); }
     else if (act === "savenick") {
       const nick = (document.getElementById("nick").value || "").trim();
-      if (nick.length < 1 || nick.length > 12) { showError("별명을 확인해 주세요", { message: "1~12자로 정해 주세요." }); return; }
+      if (nick.length < 1 || nick.length > 12) { showError("별명을 확인해 주세요", { code: "app/message", message: "1~12자로 정해 주세요." }); return; }
       await Store.saveProfile(auth.uid, nick);
       clearError();
       await afterLogin(auth.uid);
@@ -322,39 +470,49 @@ loginSlot.addEventListener("click", (e) => {
   if (b) authAction(b.dataset.act);
 });
 
-app.addEventListener("click", (e) => {
+app.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-act]");
   if (!b || b.tagName === "SELECT") return;
-  if (["login", "logout", "retry", "savenick"].includes(b.dataset.act)) { authAction(b.dataset.act); return; }
+  const act = b.dataset.act;
+  if (["login", "logout", "retry", "savenick"].includes(act)) { authAction(act); return; }
   if (auth.status !== "in") return;
-  const act = b.dataset.act, m = state && state.room ? me() : null, i = Number(b.dataset.i), c = b.dataset.c;
-  if (act === "create") {
-    const name = (document.getElementById("room-name").value || "우리 방").trim() || "우리 방";
-    const role = document.querySelector("input[name=role]:checked").value;
-    state = newGame(name, role);
-    commit();
-  } else if (act === "leave") {
-    if (state.over || confirm("방을 나가면 지금 게임이 사라져요. 나갈까요?")) {
-      state = null; render();
-      Store.deleteGame(auth.uid).then(clearError).catch((err) => showError("지우기에 실패했어요", err));
+  const i = Number(b.dataset.i), c = b.dataset.c;
+  const pickedRole = () => (document.querySelector("input[name=role]:checked") || {}).value || "company";
+  try {
+    if (act === "create") {
+      const name = (document.getElementById("room-name").value || "우리 방").trim() || "우리 방";
+      enterRoom(await Store.createRoom(auth.uid, auth.nickname, name, pickedRole()));
+    } else if (act === "join") {
+      enterRoom(await Store.joinRoom(auth.uid, auth.nickname, document.getElementById("join-code").value, pickedRole()));
+    } else if (act === "role") {
+      await Store.setMyRole(roomCode, auth.uid, auth.nickname, b.dataset.role);
+    } else if (act === "start") { await startGame(); }
+    else if (act === "leave") {
+      if (state && state.over) await leaveRoom();
+      else if (confirm(isHost() ? "방을 닫으면 모두 나가고 게임이 사라져요. 닫을까요?" : "방을 나갈까요? 내 자리는 봇이 이어받아요.")) await leaveRoom();
     }
-  } else if (act === "next") { advance(state); commit(); }
-  else if (act === "upgrade") run(() => upgradeFactory(state, m.id, i));
-  else if (act === "addfac") run(() => addFactory(state, m.id));
-  else if (act === "secure") run(() => toggleSecure(state, m.id));
-  else if (act === "spy") run(() => spyOn(state, m.id, c));
-  else if (act === "buy") run(() => buyShare(state, m.id, c));
-  else if (act === "sell") run(() => sellShare(state, m.id, c));
+    else if (act === "ready") send("ready");
+    else if (act === "unready") send("unready");
+    else if (act === "force") forceAdvance();
+    else if (act === "upgrade") send("upgrade", { i });
+    else if (act === "addfac") send("addfac");
+    else if (act === "secure") send("secure");
+    else if (act === "spy") send("spy", { c });
+    else if (act === "buy") send("buy", { c });
+    else if (act === "sell") send("sell", { c });
+  } catch (err) {
+    showError("처리하지 못했어요", err);
+  }
 });
 
 app.addEventListener("change", (e) => {
   const s = e.target;
-  if (auth.status !== "in" || !state) return;
+  if (auth.status !== "in" || !state || !me()) return;
   if (!s.dataset || !s.dataset.act || s.tagName !== "SELECT") return;
-  const m = me(), i = Number(s.dataset.i), f = m.factories[i];
-  if (s.dataset.act === "product") setFactory(state, m.id, i, s.value, f.price);
-  else if (s.dataset.act === "price") setFactory(state, m.id, i, f.product, s.value);
-  commit();
+  const i = Number(s.dataset.i), f = me().factories[i];
+  if (!f) return;
+  if (s.dataset.act === "product") send("setFactory", { i, product: s.value, price: f.price });
+  else if (s.dataset.act === "price") send("setFactory", { i, product: f.product || "", price: s.value });
 });
 
 render();
