@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>정세 읽는 기업 게임</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f6fb; color: #222; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #1f3a68; color: #fff; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  #login-slot { min-width: 80px; min-height: 32px; } /* 로그인 단추 자리: 비워 둠 */
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px #0002; }
+  .coins { font-size: 2rem; font-weight: bold; color: #b8860b; }
+  button { font-size: 1rem; padding: 8px 14px; margin: 4px 4px 0 0; border: 0; border-radius: 8px; background: #2c6bd6; color: #fff; cursor: pointer; }
+  button.gray { background: #888; }
+  ul { list-style: none; padding: 0; margin: 8px 0 0; }
+  li { padding: 6px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+  .plus { color: #1a8a3a; } .minus { color: #c0392b; }
+  .empty { color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <h1>정세 읽는 기업 게임</h1>
+  <div id="login-slot"></div>
+</header>
+<main>
+  <section class="card">
+    <div>내 코인</div>
+    <div class="coins"><span id="coins">0</span> 코인</div>
+    <div>
+      <!-- 시험용 단추: 나중에 게임이 코인을 움직이면 지운다 -->
+      <button id="t-plus">+100 (시험)</button>
+      <button id="t-minus">-100 (시험)</button>
+      <button id="t-reset" class="gray">처음부터</button>
+    </div>
+  </section>
+  <section class="card">
+    <strong>거래 기록</strong>
+    <ul id="log"></ul>
+  </section>
+</main>
+<script src="storage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
