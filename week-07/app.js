@@ -22,6 +22,8 @@ const me = () => (state ? state.seats.find((s) => s.uid === auth.uid && !s.bot) 
 const isHost = () => !!room && room.hostUid === auth.uid;
 const prod = (p) => (p ? `${PRODUCTS[p].icon} ${PRODUCTS[p].name}` : "쉬는 공장");
 const tierText = (t) => `${PRICES[t].label} ${PRICES[t].price}`;
+const buyCost = (c) => Math.ceil(c.stock * (1 + TRADE_FEE));
+const sellGain = (c) => Math.floor(c.stock * (1 - TRADE_FEE));
 const sign = (n) => (n > 0 ? "+" + n : String(n));
 
 // ---------- 오류 보여 주기 ----------
@@ -375,9 +377,9 @@ function investorPanelHtml() {
   }
   if (ph === 2) {
     const rows = companiesOf(state).map((c) => `<div class="row"><strong>${esc(c.name)}</strong> 주가 ${c.stock}코인 · 내 주식 ${m.shares[c.id] || 0}주 · 남은 주식 ${freeShares(state, c.id)}<br>
-      <button class="green" data-act="buy" data-c="${c.id}" ${m.coins < c.stock || freeShares(state, c.id) <= 0 ? "disabled" : ""}>1주 사기</button>
-      <button data-act="sell" data-c="${c.id}" ${(m.shares[c.id] || 0) <= 0 ? "disabled" : ""}>1주 팔기</button></div>`).join("");
-    return `<section class="card"><h2>📈 주식 베팅</h2><p class="muted">힌트와 조사 결과를 보고 투자할 회사를 고르세요.</p>${rows}${spyHtml(m.id)}</section>`;
+      <button class="green" data-act="buy" data-c="${c.id}" ${m.coins < buyCost(c) || freeShares(state, c.id) <= 0 ? "disabled" : ""}>1주 사기 (−${buyCost(c)})</button>
+      <button data-act="sell" data-c="${c.id}" ${(m.shares[c.id] || 0) <= 0 ? "disabled" : ""}>1주 팔기 (+${sellGain(c)})</button></div>`).join("");
+    return `<section class="card"><h2>📈 주식 베팅</h2><p class="muted">힌트와 조사 결과를 보고 투자할 회사를 고르세요. 사고팔 때마다 수수료 ${Math.round(TRADE_FEE * 100)}%가 붙어요.</p>${rows}${spyHtml(m.id)}</section>`;
   }
   const msg = ["정세 힌트를 읽어 보세요. 어느 회사가 유리할까요?", "", "", "돌발 뉴스가 터질 수 있어요. 주식이 어떻게 될까요?", ""][ph];
   return msg ? `<section class="card"><h2>📈 투자자</h2><p>${msg}</p></section>` : "";

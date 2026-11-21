@@ -118,15 +118,17 @@ function buyShare(st, iid, cid) {
   const i = seatOf(st, iid), c = seatOf(st, cid);
   if (need(st, 2)) return "지금은 거래할 수 없어요.";
   if (freeShares(st, cid) <= 0) return "살 수 있는 주식이 없어요.";
-  if (i.coins < c.stock) return "코인이 모자라요.";
-  addCoins(st, i, -c.stock, `${c.name} 주식 1주 사기`);
+  const cost = Math.ceil(c.stock * (1 + TRADE_FEE));
+  if (i.coins < cost) return "코인이 모자라요.";
+  addCoins(st, i, -cost, `${c.name} 주식 1주 사기`);
+  if (BUY_PAYS_COMPANY) addCoins(st, c, c.stock, "주식을 판 돈");
   i.shares[cid]++;
   return null;
 }
 function sellShare(st, iid, cid) {
   const i = seatOf(st, iid), c = seatOf(st, cid);
   if (need(st, 2) || !(i.shares[cid] > 0)) return "팔 주식이 없어요.";
-  addCoins(st, i, c.stock, `${c.name} 주식 1주 팔기`);
+  addCoins(st, i, Math.floor(c.stock * (1 - TRADE_FEE)), `${c.name} 주식 1주 팔기`);
   i.shares[cid]--;
   return null;
 }
@@ -242,7 +244,7 @@ function settle(st) {
   cs.forEach((c) => {
     const r = res[c.id];
     addCoins(st, c, r.profit, "이번 턴 정산");
-    const per = r.profit > 0 ? Math.floor((r.profit * 0.2) / SHARES) : 0;
+    const per = r.profit > 0 ? Math.floor((r.profit * DIVIDEND_RATE) / SHARES) : 0;
     r.perShare = per;
     investorsOf(st).forEach((i) => {
       const pay = per * (i.shares[c.id] || 0);
@@ -252,7 +254,7 @@ function settle(st) {
         dividends[i.id] = (dividends[i.id] || 0) + pay;
       }
     });
-    const pct = Math.max(-0.3, Math.min(0.6, r.profit / 400));
+    const pct = Math.max(-STOCK_DOWN_MAX, Math.min(STOCK_UP_MAX, r.profit / STOCK_PCT_DIV));
     const old = c.stock;
     c.stock = Math.max(20, Math.round(old * (1 + pct)));
     c.lastChange = c.stock - old;
@@ -308,7 +310,10 @@ function finalScores(st) {
   return st.seats.map((s) => {
     let worth = s.coins;
     if (s.role === "investor") companiesOf(st).forEach((c) => (worth += (s.shares[c.id] || 0) * c.stock));
-    else s.factories.forEach((f, i) => { worth += (i > 0 ? NEW_SLOT_COST : 0) + (f.level >= 2 ? 200 : 0) + (f.level >= 3 ? 300 : 0); });
+    else {
+      s.factories.forEach((f, i) => { worth += (i > 0 ? NEW_SLOT_COST : 0) + (f.level >= 2 ? 200 : 0) + (f.level >= 3 ? 300 : 0); });
+      if (OWNER_SHARES_COUNT) worth += freeShares(st, s.id) * s.stock; // 안 팔린 주식은 회사 주인 몫
+    }
     return { seat: s, worth };
   }).sort((a, b) => b.worth - a.worth);
 }

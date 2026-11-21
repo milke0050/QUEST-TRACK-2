@@ -51,3 +51,12 @@ const MAX_PER_ROLE = 4; // 기업 4자리 + 투자자 4자리 = 사람 최대 8�
 const MIN_PER_ROLE = 2; // 사람이 모자라면 봇이 들어와서 역할마다 최소 2자리를 채운다
 const BOT_COMPANY_NAMES = ["햇살상회", "푸른공방", "바람상점", "별빛제작소"];
 const BOT_INVESTOR_NAMES = ["투자봇 가", "투자봇 나", "투자봇 다", "투자봇 라"];
+
+// 주식 균형 조절 값 (투자자가 너무 유리하면 여기 숫자를 고친다)
+const STOCK_PCT_DIV = 1000; // 이익 ÷ 이 값 = 주가가 움직이는 비율 (클수록 주가가 덜 움직임)
+const STOCK_UP_MAX = 0.25; // 한 턴에 주가가 오르는 최대 비율
+const STOCK_DOWN_MAX = 0.25; // 한 턴에 주가가 내리는 최대 비율
+const DIVIDEND_RATE = 0.2; // 이익 중 배당으로 나가는 비율
+const TRADE_FEE = 0.05; // 사고팔 때 내는 수수료 비율 (0.05 = 5%)
+const BUY_PAYS_COMPANY = false; // true 면 주식 살 때 낸 코인이 그 회사로 들어간다
+const OWNER_SHARES_COUNT = false; // true 면 기업의 점수에 안 팔린 주식 값도 더한다
