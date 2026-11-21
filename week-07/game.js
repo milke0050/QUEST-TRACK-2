@@ -71,18 +71,17 @@ function startTurn(st) {
 
 // ---------- 기업 행동 ----------
 // phase 는 숫자 하나 또는 목록. 지금 단계가 맞으면 null, 아니면 안내 글을 돌려준다.
-const BUILD_PHASES = [PH.BUILD1, PH.BUILD2]; // 공장을 정하고 고치는 두 단계
 const need = (st, phase) => ([].concat(phase).includes(st.phase) ? null : "지금은 할 수 없는 단계예요.");
 
 function setFactory(st, cid, i, product, price) {
   const f = seatOf(st, cid).factories[i];
-  if (!f || need(st, BUILD_PHASES)) return;
+  if (!f || need(st, PH.BUILD2)) return; // 만들 제품·가격은 2차에서 정하고 고친다
   f.product = product || null;
   f.price = price;
 }
 function upgradeFactory(st, cid, i) {
   const c = seatOf(st, cid), f = c.factories[i], cost = f && UPGRADE_COST[f.level];
-  if (need(st, BUILD_PHASES) || !cost) return "더 올릴 수 없어요.";
+  if (need(st, PH.BUILD1) || !cost) return "더 올릴 수 없어요."; // 업그레이드는 1차
   if (c.coins < cost) return "코인이 모자라요.";
   addCoins(st, c, -cost, `공장 ${i + 1} 업그레이드`);
   f.level++;
@@ -90,7 +89,7 @@ function upgradeFactory(st, cid, i) {
 }
 function addFactory(st, cid) {
   const c = seatOf(st, cid);
-  if (need(st, BUILD_PHASES) || c.factories.length >= MAX_SLOTS) return "공장은 최대 3개예요.";
+  if (need(st, PH.BUILD1) || c.factories.length >= MAX_SLOTS) return "공장은 최대 3개예요.";
   if (c.coins < NEW_SLOT_COST) return "코인이 모자라요.";
   addCoins(st, c, -NEW_SLOT_COST, "새 공장 짓기");
   c.factories.push({ level: 1, product: null, price: "mid" });
@@ -108,7 +107,7 @@ function toggleSecure(st, cid) {
 // 카드: 준비 단계에서 한 장만 쓸 수 있다. 효과는 정산 때 적용된다.
 function useCard(st, cid, card) {
   const c = seatOf(st, cid), def = CARDS[card];
-  if (need(st, BUILD_PHASES) || !def) return "지금은 카드를 쓸 수 없어요.";
+  if (need(st, PH.BUILD1) || !def) return "지금은 카드를 쓸 수 없어요."; // 카드는 1차
   if (c.card) return "이번 턴에는 이미 카드를 썼어요.";
   if (!(c.hand || []).includes(card)) return "그 카드는 없어요.";
   if (c.coins < def.cost) return "코인이 모자라요.";
@@ -170,13 +169,22 @@ function rankedProducts(st) {
   return Object.keys(s).sort((a, b) => s[b] - s[a] || noise[b] - noise[a]);
 }
 
+// 1차 공장 준비(투자): 봇은 공장을 늘리거나 올리고, 보안과 카드를 쓴다.
 function botPrepare(st) {
-  const ranked = rankedProducts(st);
   companiesOf(st).filter((c) => c.bot).forEach((c) => {
     if (c.factories.length < MAX_SLOTS && c.coins > 600 && RNG() < 0.3) addFactory(st, c.id);
     c.factories.forEach((f, i) => {
       if (f.level < 3 && c.coins > 600 && RNG() < 0.3) upgradeFactory(st, c.id, i);
     });
+    if (c.coins > 300 && RNG() < 0.3) toggleSecure(st, c.id);
+    if (c.coins > 300 && RNG() < 0.4) useCard(st, c.id, pick(c.hand));
+  });
+}
+
+// 2차 공장 준비가 열릴 때: 봇이 만들 제품과 가격을 정한다. (사람은 2차 동안 정하고 고친다)
+function botChoose(st) {
+  const ranked = rankedProducts(st);
+  companiesOf(st).filter((c) => c.bot).forEach((c) => {
     c.factories.forEach((f, i) => {
       let want = i === 0 || RNG() < 0.5 ? ranked[0] : ranked[1];
       const crowded = companiesOf(st).some((o) => o.id !== c.id && o.factories.some((g) => g.product === want));
@@ -185,8 +193,6 @@ function botPrepare(st) {
       const r = RNG();
       f.price = f.level >= 2 ? (r < 0.2 ? "low" : r < 0.5 ? "mid" : "high") : r < 0.3 ? "low" : r < 0.8 ? "mid" : "high";
     });
-    if (c.coins > 300 && RNG() < 0.3) toggleSecure(st, c.id);
-    if (c.coins > 300 && RNG() < 0.4) useCard(st, c.id, pick(c.hand));
   });
 }
 
@@ -390,9 +396,9 @@ function advance(st) {
   if (st.over) return;
   const p = st.phase;
   // 봇은 새 단계가 열린 뒤에 행동한다
-  if (p === PH.HINT) { st.phase = PH.BUILD1; botPrepare(st); } // 1차: 봇이 공장을 정한다
-  else if (p === PH.BUILD1) { st.phase = PH.BUILD2; botSpy(st); botRevise(st); } // 2차: 봇이 조사하고 고친다 (사람은 이 단계 동안 확인하고 고친다)
-  else if (p === PH.BUILD2) { st.phase = PH.STOCK; botInvest(st); }
+  if (p === PH.HINT) { st.phase = PH.BUILD1; botPrepare(st); } // 1차: 봇이 투자한다
+  else if (p === PH.BUILD1) { st.phase = PH.BUILD2; botChoose(st); } // 2차가 열리면 봇이 제품·가격을 정한다
+  else if (p === PH.BUILD2) { botSpy(st); botRevise(st); st.phase = PH.STOCK; botInvest(st); } // 2차가 끝날 때 봇이 사람의 최종 선택을 조사하고(조사는 2차에만 가능) 고친다
   else if (p === PH.STOCK) { rollEvent(st); st.phase = PH.EVENT; }
   else if (p === PH.EVENT) { settle(st); st.phase = PH.RESULT; }
   else if (st.turn >= TOTAL_TURNS) st.over = true;

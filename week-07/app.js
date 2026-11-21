@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=13";
+import { Store } from "./storage.js?v=14";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -324,8 +324,8 @@ function spyHtml(viewerId) {
   return Object.keys(mine).map((cid) => {
     const c = seatOf(state, cid), info = mine[cid];
     if (info.blocked) return `<div class="hint">🛡️ ${esc(c.name)} 조사 실패! 보안이 켜져 있었어요.</div>`;
-    const list = info.factories.map((f, i) => `공장${i + 1}: ${prod(f.product)}${f.product ? " · " + tierText(f.price) : ""}`).join("<br>");
-    return `<div class="hint">🕵️ <strong>${esc(c.name)}</strong> 조사 결과<br>${list}</div>`;
+    const list = info.factories.map((f, i) => `공장${i + 1}: ${f.product ? prod(f.product) + " · " + tierText(f.price) : "아직 안 정했거나 쉬는 공장"}`).join("<br>");
+    return `<div class="hint">🕵️ <strong>${esc(c.name)}</strong> 조사 결과 <span class="muted">(지금 정해 둔 것이에요. 상대가 2차 동안 고칠 수 있어요)</span><br>${list}</div>`;
   }).join("");
 }
 
@@ -374,51 +374,59 @@ function companyPanelHtml() {
     }[ph];
     return msg ? `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)}</h2><p>${msg}</p></section>` : "";
   }
+  const title = `<h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(${build1 ? "1차 공장 준비 · 투자" : "2차 공장 준비 · 조사와 수정"})</span></h2>`;
+  const common = `같은 제품을 사려는 손님(수요)은 정해져 있어서 경쟁 공장끼리 나눠 가져요. 값이 싸고 공장 레벨(품질)이 높을수록 더 많이 가져와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요.`;
+
+  if (build1) {
+    // 1차: 공장 업그레이드 · 새 공장 · 비공개 생산 · 카드
+    const facs = m.factories.map((f, i) => {
+      const up = UPGRADE_COST[f.level];
+      return `<div class="fac"><strong>공장 ${i + 1} · 레벨 ${f.level}</strong>
+        <div class="muted">만드는 비용 ${UNIT_COST[f.level]} · 유지비 ${UPKEEP[f.level]}/턴 · 최대 ${CAP[f.level]}개 · 지금 정해 둔 것: ${f.product ? prod(f.product) + " · " + tierText(f.price) : "아직 안 정함"}</div>
+        ${up ? `<button class="small" data-act="upgrade" data-i="${i}" ${m.coins < up ? "disabled" : ""}>업그레이드 (${up}코인)</button>` : '<span class="tag">최고 레벨</span>'}</div>`;
+    }).join("");
+    const addBtn = m.factories.length < MAX_SLOTS ? `<button data-act="addfac" ${m.coins < NEW_SLOT_COST ? "disabled" : ""}>공장 더 짓기 (${NEW_SLOT_COST}코인)</button>` : "";
+    const secure = `<button data-act="secure" class="${m.secure ? "gray" : ""}" ${m.secure || m.coins < SECURE_COST ? "disabled" : ""}>${m.secure ? "🛡️ 비공개 생산 켜짐" : `🛡️ 비공개 생산 켜기 (${SECURE_COST}코인)`}</button>`;
+    return `<section class="card">${title}
+      <p class="muted">공장을 업그레이드하고, 새 공장을 짓고, 카드를 쓰고, 비공개 생산을 켜세요. 만들 제품과 가격은 다음 단계(2차)에서 상대를 조사한 뒤 정해요.<br>${common}</p>
+      <div class="muted">📦 재고: ${invText(m)}</div>${facs}${addBtn}${secure}</section>${cardsHtml(m)}`;
+  }
+
+  // 2차: 다른 회사 조사 + 내 공장의 만들 제품·가격 정하기/고치기
   const facs = m.factories.map((f, i) => {
-    const up = UPGRADE_COST[f.level];
     const prodOpts = `<option value="">쉬기</option>` + Object.keys(PRODUCTS).map((p) => `<option value="${p}" ${f.product === p ? "selected" : ""}>${prod(p)}</option>`).join("");
     const priceOpts = Object.keys(PRICES).map((k) => `<option value="${k}" ${f.price === k ? "selected" : ""}>${tierText(k)}</option>`).join("");
     return `<div class="fac"><strong>공장 ${i + 1} · 레벨 ${f.level}</strong>
-      <div class="muted">만드는 비용 ${UNIT_COST[f.level]} · 유지비 ${UPKEEP[f.level]}/턴 · 최대 ${CAP[f.level]}개</div>
+      <div class="muted">만드는 비용 ${UNIT_COST[f.level]} · 최대 ${CAP[f.level]}개</div>
       <select data-act="product" data-i="${i}">${prodOpts}</select>
-      <select data-act="price" data-i="${i}">${priceOpts}</select>
-      ${up ? `<button class="small" data-act="upgrade" data-i="${i}" ${m.coins < up ? "disabled" : ""}>업그레이드 (${up}코인)</button>` : '<span class="tag">최고 레벨</span>'}</div>`;
+      <select data-act="price" data-i="${i}">${priceOpts}</select></div>`;
   }).join("");
-  const addBtn = m.factories.length < MAX_SLOTS ? `<button data-act="addfac" ${m.coins < NEW_SLOT_COST ? "disabled" : ""}>공장 더 짓기 (${NEW_SLOT_COST}코인)</button>` : "";
-
-  // 1차: 공장을 짓고 정하고, 비공개 생산을 켠다. 2차: 상대 공장을 조사하고 내 공장을 고친다.
-  const secure = build1
-    ? `<button data-act="secure" class="${m.secure ? "gray" : ""}" ${m.secure || m.coins < SECURE_COST ? "disabled" : ""}>${m.secure ? "🛡️ 비공개 생산 켜짐" : `🛡️ 비공개 생산 켜기 (${SECURE_COST}코인)`}</button>`
-    : `<p class="muted">${m.secure ? "🛡️ 비공개 생산이 켜져 있어요." : "🛡️ 비공개 생산은 1차 공장 준비에서만 켤 수 있어요."}</p>`;
-  const spies = build2
-    ? `<div><strong>🕵️ 다른 회사 조사</strong> <span class="muted">(모두 1차에서 공장을 정한 뒤라서 진짜 정보가 보여요)</span><br>${companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("")}</div>${spyHtml(m.id)}`
-    : `<p class="muted">🕵️ 다른 회사 조사는 2차 공장 준비에서 할 수 있어요. 지금은 모두가 공장을 정하는 중이에요.</p>`;
-  const help = build1
-    ? "1차 공장 준비: 공장을 짓고 만들 제품과 가격을 정하세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요. 다음 단계에서 상대 공장을 보고 고칠 수 있어요."
-    : "2차 공장 준비: 상대 공장을 조사해서 보고, 내 공장의 제품과 가격을 고쳐도 돼요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.";
-  return `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(${build1 ? "1차" : "2차"} 공장 준비)</span></h2>
-    <p class="muted">${help}<br>
-    같은 제품을 사려는 손님(수요)은 정해져 있어서 경쟁 공장끼리 나눠 가져요. 값이 싸고 공장 레벨(품질)이 높을수록 더 많이 가져와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요.</p>
+  const spies = companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("");
+  return `<section class="card">${title}
+    <p class="muted">먼저 다른 회사를 조사해 보고, 내 공장이 만들 제품과 가격을 정하거나 고치세요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.<br>${common}</p>
     <div class="muted">📦 재고: ${invText(m)}</div>
-    ${facs}${addBtn}${secure}${spies}</section>${cardsHtml(m)}`;
+    <div><strong>🕵️ 다른 회사 조사</strong><br>${spies}</div>${spyHtml(m.id)}
+    ${facs}
+    <p class="muted">${m.secure ? "🛡️ 비공개 생산이 켜져 있어서 상대 조사가 막혀요." : ""}</p></section>${cardsHtml(m)}`;
 }
 
 function cardsHtml(m) {
   const hand = m.hand || [];
   if (!hand.length) return "";
+  const open = state.phase === PH.BUILD1; // 카드는 1차에서만 쓸 수 있다
   const btns = hand.map((k) => {
     const c = CARDS[k], used = m.card === k;
     return `<div class="row"><strong>${c.icon} ${c.name}</strong> <span class="muted">${c.text}</span><br>
-      <button data-act="card" data-c="${k}" class="${used ? "gray" : ""}" ${m.card || m.coins < c.cost ? "disabled" : ""}>${used ? "사용함 ✅" : `쓰기 (${c.cost}코인)`}</button></div>`;
+      <button data-act="card" data-c="${k}" class="${used ? "gray" : ""}" ${!open || m.card || m.coins < c.cost ? "disabled" : ""}>${used ? "사용함 ✅" : `쓰기 (${c.cost}코인)`}</button></div>`;
   }).join("");
-  return `<section class="card"><h2>🃏 이번 턴 카드 <span class="muted">(한 장만 쓸 수 있어요, 정산 때 효과가 나와요)</span></h2>${btns}</section>`;
+  return `<section class="card"><h2>🃏 이번 턴 카드 <span class="muted">(1차 공장 준비에서 한 장만 쓸 수 있어요, 정산 때 효과가 나와요)</span></h2>${btns}</section>`;
 }
 
 function investorPanelHtml() {
   const m = me(), ph = state.phase;
   if (ph === PH.BUILD2) {
     return `<section class="card"><h2>📈 투자자 · 정보 탐색 <span class="muted">(2차 공장 준비)</span></h2>
-      <p class="muted">기업들이 1차 공장 준비를 마쳤어요. 코인을 내고 회사의 공장과 가격을 몰래 조사할 수 있어요. 보안이 켜진 회사는 막혀요. 기업이 2차에서 고칠 수 있으니 정보가 달라질 수도 있어요.</p>
+      <p class="muted">기업들이 지금 만들 제품과 가격을 정하고 있어요. 코인을 내고 회사의 공장과 가격을 몰래 조사할 수 있어요. 보안이 켜진 회사는 막혀요. 기업이 2차 동안 고칠 수 있으니 정보가 달라질 수도 있어요.</p>
       ${companiesOf(state).map((c) => spyBtn(m, c)).join("")}${spyHtml(m.id)}</section>`;
   }
   if (ph === PH.STOCK) {
@@ -429,7 +437,7 @@ function investorPanelHtml() {
   }
   const msg = {
     [PH.HINT]: "정세 힌트를 읽어 보세요. 어느 회사가 유리할까요?",
-    [PH.BUILD1]: "기업들이 1차 공장 준비를 하는 중이에요. 조사는 다음 단계(2차 공장 준비)에서 할 수 있어요.",
+    [PH.BUILD1]: "기업들이 공장 업그레이드, 카드, 비공개 생산을 하는 중이에요. 조사는 다음 단계(2차 공장 준비)에서 할 수 있어요.",
     [PH.EVENT]: "돌발 뉴스가 터질 수 있어요. 주식이 어떻게 될까요?",
   }[ph];
   return msg ? `<section class="card"><h2>📈 투자자</h2><p>${msg}</p></section>` : "";
