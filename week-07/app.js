@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=10";
+import { Store } from "./storage.js?v=11";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -11,6 +11,9 @@ let state = null; // 판 상태 (시작 뒤)
 let unsubs = [];
 let actionsWatching = false;
 let hostBusy = Promise.resolve();
+let loadTimer = null; // 방 정보가 오래 안 오면 멈춰 있지 않고 안내를 보여 주기 위한 시계
+let loadFailed = false;
+const ROOM_LOAD_MS = 8000;
 let flash = "";
 
 const app = document.getElementById("app");
@@ -73,14 +76,16 @@ Store.onUser((u) => {
 });
 
 // ---------- 방 들어가기 / 나가기 ----------
-function stopWatching() { unsubs.forEach((f) => f()); unsubs = []; actionsWatching = false; }
+function stopWatching() { unsubs.forEach((f) => f()); unsubs = []; actionsWatching = false; clearTimeout(loadTimer); }
 function resetRoomVars() { roomCode = null; room = null; members = []; state = null; }
 
 function enterRoom(code) {
   stopWatching();
   resetRoomVars();
   roomCode = code;
-  unsubs.push(Store.watchRoom(code, onRoom, (e) => showError("방을 불러오지 못했어요", e)));
+  loadFailed = false;
+  loadTimer = setTimeout(() => { if (roomCode === code && !room) { loadFailed = true; render(); } }, ROOM_LOAD_MS);
+  unsubs.push(Store.watchRoom(code, onRoom, (e) => { loadFailed = true; showError("방을 불러오지 못했어요", e); render(); }));
   unsubs.push(Store.watchMembers(code, (list) => { members = list; render(); }, (e) => showError("사람 목록을 불러오지 못했어요", e)));
 }
 
@@ -93,6 +98,13 @@ function leaveLocal(msg) {
 }
 
 function onRoom(data) {
+  try { handleRoom(data); }
+  catch (e) { showError("방 정보를 처리하지 못했어요", e); loadFailed = true; render(); }
+}
+
+function handleRoom(data) {
+  clearTimeout(loadTimer);
+  loadFailed = false;
   if (!data) { leaveLocal("방이 없어졌어요."); return; }
   room = data;
   // 방장은 자기 컴퓨터의 판이 가장 최신이라, 처음 불러올 때만 방의 판을 받는다.
@@ -485,7 +497,16 @@ function renderInner() {
   loginSlot.innerHTML = loginSlotHtml();
   if (auth.status !== "in") { app.innerHTML = loginScreenHtml(); return; }
   if (!roomCode) { app.innerHTML = toast + noRoomHtml(); return; }
-  if (!room) { app.innerHTML = toast + `<section class="card"><p>방을 불러오는 중…</p></section>`; return; }
+  if (!room) {
+    app.innerHTML = toast + (loadFailed
+      ? `<section class="card"><h2>방을 불러오지 못했어요</h2>
+          <p>방 코드 <strong>${esc(roomCode)}</strong> 의 정보가 오지 않아요. 위쪽 빨간 오류 글이 있으면 그 글을 확인해 주세요.</p>
+          <p class="muted">많은 경우 Firebase 콘솔에 새 보안 규칙(rooms)을 아직 게시하지 않았거나, 인터넷 연결이 막혀 있을 때예요.</p>
+          <button data-act="retryroom" class="big">다시 불러오기</button>
+          <button data-act="forgetroom" class="big gray">이 방 잊고 처음으로</button></section>`
+      : `<section class="card"><p>방을 불러오는 중…</p></section>`);
+    return;
+  }
   if (room.status === "lobby" || !state) {
     app.innerHTML = toast + (room.status === "lobby" ? roomLobbyHtml() : `<section class="card"><p>판을 불러오는 중…</p></section>`);
     return;
@@ -546,6 +567,8 @@ app.addEventListener("click", async (e) => {
       enterRoom(await Store.joinRoom(auth.uid, auth.nickname, document.getElementById("join-code").value, pickedRole()));
     } else if (act === "role") {
       await Store.setMyRole(roomCode, auth.uid, auth.nickname, b.dataset.role);
+    } else if (act === "retryroom") { enterRoom(roomCode); render();
+    } else if (act === "forgetroom") { leaveLocal("");
     } else if (act === "start") { await startGame(); }
     else if (act === "leave") {
       if (state && state.over) await leaveRoom();
