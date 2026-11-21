@@ -44,3 +44,8 @@ ul.plain li { padding: 4px 0; border-bottom: 1px solid #eee; display: flex; flex
 .slot-empty { min-height: 0; } /* 방 들어가기 자리: 비워 둠 */
 @keyframes pop { from { transform: scale(.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes grow { 0% { transform: scale(.6); } 60% { transform: scale(1.4); } 100% { transform: scale(1); } }
+.bigmoney { font-size: 2.2rem; font-weight: bold; line-height: 1.2; }
+.bar { background: #e3e8f2; border-radius: 999px; height: 14px; margin: 6px 0 2px; overflow: hidden; }
+.bar span { display: block; height: 100%; background: #2c6bd6; border-radius: 999px; }
+.barlabel { font-size: .9rem; }
+details summary { cursor: pointer; font-weight: bold; }

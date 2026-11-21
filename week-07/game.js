@@ -6,6 +6,8 @@ const seatOf = (st, id) => st.seats.find((s) => s.id === id);
 const companiesOf = (st) => st.seats.filter((s) => s.role === "company");
 const investorsOf = (st) => st.seats.filter((s) => s.role === "investor");
 const heldShares = (st, cid) => investorsOf(st).reduce((n, i) => n + (i.shares[cid] || 0), 0);
+// 자산: 기업은 코인, 투자자는 코인 + 가진 주식 값
+const worthOf = (st, seat) => seat.coins + (seat.role === "investor" ? companiesOf(st).reduce((n, c) => n + (seat.shares[c.id] || 0) * c.stock, 0) : 0);
 const freeShares = (st, cid) => SHARES - heldShares(st, cid);
 
 // 코인을 바꾸는 곳은 여기 하나. 사람 자리면 그 사람의 거래 기록(1번 기능)에 남긴다.
@@ -57,6 +59,7 @@ function startTurn(st) {
     b: RNG() < 0.5 ? st.truth : pick(others), // 소문: 더 자주 틀림
   };
   st.event = null; st.spy = {}; st.result = null; st.news = []; st.phase = 0; st.ready = {};
+  st.seats.forEach((s) => (s.worthStart = worthOf(st, s))); // 이번 턴을 시작할 때 자산 (얼마 벌었는지 비교용)
   companiesOf(st).forEach((c) => {
     c.secure = false;
     c.card = null;
@@ -227,10 +230,11 @@ function rollEvent(st) {
   }
 }
 
-// 판매 공식: 판매량 = 작은 쪽( 가진 수량 , 제품 수요 × 내 가격 몫 )
-//   가진 수량 = 이번에 만든 개수(생산 능력) + 지난 턴에 팔리지 않고 남은 재고
-//   내 가격 몫 = 내 가격 가중치 ÷ 같은 제품을 만드는 모든 공장의 가중치 합 (저가 3 · 적정가 2 · 고가 1)
-//   (광고·방해 카드는 수요 몫을 늘리거나 줄인다)
+// 판매 공식: 제품마다 손님 수(수요)는 정해져 있고, 그 손님을 가격과 품질(공장 레벨)로 나눠 갖는다.
+//   내 손님 = 손님 수 × 내 몫,  내 몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합
+//   가중치 = 가격 가중치(저가 3 · 적정가 2 · 고가 1) × 품질(공장 레벨)
+//   판 개수 = 작은 쪽( 가진 수량 , 내 손님 )  (가진 수량 = 이번에 만든 개수 + 지난 재고)
+//   (광고·방해 카드는 내 손님을 늘리거나 줄인다)
 // 경쟁 과열: 같은 제품을 만드는 공장이 하나 더 있을 때마다 판매 가격이 내려간다.
 // 재고: 팔리지 않은 제품은 다음 턴으로 넘어간다(보관비가 든다). 만드는 비용은 만들 때 낸다.
 function settle(st) {
@@ -243,13 +247,13 @@ function settle(st) {
   const weightSum = {}, crowd = {};
   cs.forEach((c) => c.factories.forEach((f) => {
     if (!f.product) return;
-    weightSum[f.product] = (weightSum[f.product] || 0) + PRICES[f.price].weight;
+    weightSum[f.product] = (weightSum[f.product] || 0) + PRICES[f.price].weight * QUALITY[f.level];
     crowd[f.product] = (crowd[f.product] || 0) + 1;
   }));
 
   const res = {};
   cs.forEach((c) => {
-    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, storage: 0, refund: 0, profit: 0, card: c.card || null };
+    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, storage: 0, refund: 0, profit: 0, customers: 0, sold: 0, card: c.card || null };
     // 카드 효과
     const sabotaged = cs.filter((o) => o.id !== c.id && o.card === "sabotage").length;
     const mult = (c.card === "ad" ? 1.3 : 1) * Math.pow(0.85, sabotaged);
@@ -264,7 +268,7 @@ function settle(st) {
       r.upkeep += u;
       if (!f.product) { r.rows.push({ idx: i, level: f.level, idle: true }); return; }
       const p = PRICES[f.price];
-      const share = Math.floor((demand[f.product] * p.weight * mult) / weightSum[f.product]);
+      const share = Math.floor((demand[f.product] * p.weight * QUALITY[f.level] * mult) / weightSum[f.product]); // 내 손님 수
       const produced = CAP[f.level] + rush;
       const carried = carriedUsed[f.product] ? 0 : inv[f.product] || 0; // 남은 재고는 첫 공장이 맡아 판다
       carriedUsed[f.product] = true;
@@ -277,6 +281,8 @@ function settle(st) {
       r.rows.push({ idx: i, level: f.level, product: f.product, tier: f.price, base: p.price, price, penalty: p.price - price, share, produced, carried, have, sold, left: have - sold, unit });
       r.revenue += sold * price;
       r.cost += produced * unit;
+      r.customers += share;
+      r.sold += sold;
     });
     // 새 재고: 이번에 만든 제품은 남은 만큼, 안 만든 제품은 그대로. 한도를 넘으면 버린다.
     const next = {};
@@ -314,7 +320,13 @@ function settle(st) {
     c.lastChange = c.stock - old;
     r.stockFrom = old; r.stockTo = c.stock;
   });
-  st.result = { truth: st.truth, event: ev, companies: res, dividends };
+  // 이번 턴 얼마 벌었나: 기업은 정산 이익, 투자자는 자산(코인+주식 값)이 늘어난 만큼
+  const gain = {};
+  st.seats.forEach((x) => {
+    gain[x.id] = x.role === "company" ? res[x.id].profit : worthOf(st, x) - (x.worthStart === undefined ? worthOf(st, x) : x.worthStart);
+  });
+  const totalCustomers = cs.reduce((n, c) => n + res[c.id].customers, 0);
+  st.result = { truth: st.truth, event: ev, companies: res, dividends, gain, totalCustomers };
 }
 
 function advance(st) {
