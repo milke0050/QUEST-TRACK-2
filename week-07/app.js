@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=9";
+import { Store } from "./storage.js?v=10";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -457,7 +457,29 @@ function overHtml() {
 }
 
 // ---------- 전체 그리기 ----------
+// 그리다가 오류가 나면 이전 화면이 그대로 남아 "불러오는 중"에 멈춘 것처럼 보인다.
+// 그래서 오류를 잡아서 이유를 보여 주고, 방에서 나갈 수 있는 단추를 띄운다.
 function render() {
+  try {
+    renderInner();
+  } catch (e) {
+    showError("화면을 그리지 못했어요", e);
+    app.innerHTML = roomCode
+      ? `<section class="card"><h2>화면을 그리다 문제가 생겼어요</h2>
+          <p>이 방이 옛 버전으로 만들어졌을 수 있어요. Ctrl+F5 로 새로고침해도 같으면 방을 나가서 새 방을 만들어 주세요.</p>
+          <button data-act="leave" class="big gray">${isHost() ? "방 닫기" : "방 나가기"}</button></section>`
+      : `<section class="card"><p>화면을 그리다 문제가 생겼어요. Ctrl+F5 로 새로고침해 주세요.</p></section>`;
+  }
+}
+
+function staleHtml() {
+  return `<section class="card"><h2>방의 버전이 달라요</h2>
+    <p>이 방은 버전 ${esc(state.build || "옛")}으로 시작됐고, 내 화면은 버전 ${BUILD}이에요.</p>
+    <p>먼저 <strong>Ctrl+F5</strong> 로 새로고침해 보세요. 그래도 같으면 옛 방이니, 방을 나가서 새 방을 만들어 주세요.</p>
+    <button data-act="leave" class="big gray">${isHost() ? "방 닫기" : "방 나가기"}</button></section>`;
+}
+
+function renderInner() {
   const toast = flash ? `<div class="toast">${esc(flash)}</div>` : "";
   flash = "";
   loginSlot.innerHTML = loginSlotHtml();
@@ -468,6 +490,7 @@ function render() {
     app.innerHTML = toast + (room.status === "lobby" ? roomLobbyHtml() : `<section class="card"><p>판을 불러오는 중…</p></section>`);
     return;
   }
+  if (state.build !== BUILD) { app.innerHTML = toast + staleHtml(); return; }
   const m = me();
   if (!m) {
     app.innerHTML = toast + `<section class="card"><h2>자리가 없어요</h2><p>이 방에서 나갔거나, 시작할 때 들어와 있지 않았어요.</p>
@@ -477,9 +500,7 @@ function render() {
   if (state.over) { app.innerHTML = overHtml(); return; }
   const panel = m.role === "company" ? companyPanelHtml() : investorPanelHtml();
   // 방을 시작한 사람과 화면 버전이 다르면(옛 파일이 남아 있으면) 알려 준다.
-  const oldWarn = state.build !== BUILD
-    ? `<div class="toast">⚠️ 이 방은 다른 버전(${esc(state.build || "옛")})으로 시작됐고, 내 화면은 버전 ${BUILD}이에요. Ctrl+F5 로 새로고침해 보세요.</div>` : "";
-  app.innerHTML = `${oldWarn}${toast}${trackHtml()}${readyHtml()}${newsHtml()}
+  app.innerHTML = `${toast}${trackHtml()}${readyHtml()}${newsHtml()}
     <div class="cols" style="margin-top:12px">
       <div>${hintsHtml()}${eventHtml()}${panel}${resultHtml()}</div>
       <div>${walletHtml()}${companiesHtml()}${seatsHtml()}</div>

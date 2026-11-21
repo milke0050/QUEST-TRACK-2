@@ -1,5 +1,5 @@
 // 파일을 고칠 때마다 이 번호와 index.html·app.js 의 ?v= 번호를 함께 올린다. (브라우저가 옛 파일을 쓰는 걸 막는다)
-const BUILD = "9";
+const BUILD = "10";
 
 // 게임에 쓰는 숫자와 글을 모아 둔 곳. 규칙을 바꾸고 싶으면 여기 숫자만 고치면 된다.
 const PRODUCTS = {
