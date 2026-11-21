@@ -296,6 +296,11 @@ function walletHtml() {
     <strong>거래 기록</strong><ul class="plain">${rows}</ul></section>`;
 }
 
+const invText = (c) => {
+  const k = Object.keys(c.inventory || {});
+  return k.length ? k.map((p) => `${PRODUCTS[p].icon}${c.inventory[p]}개`).join(" · ") : "없음";
+};
+
 function buildingEmoji(c) {
   const total = c.factories.reduce((n, f) => n + f.level, 0);
   return total <= 1 ? "🏠" : total <= 3 ? "🏬" : "🏭";
@@ -319,7 +324,7 @@ function companiesHtml() {
     const isMine = c.id === m.id;
     const arrow = c.lastChange > 0 ? `<span class="up">▲${c.lastChange}</span>` : c.lastChange < 0 ? `<span class="down">▼${-c.lastChange}</span>` : "";
     let info;
-    if (isMine) info = c.factories.map((f, i) => `공장${i + 1} Lv${f.level}: ${prod(f.product)}${f.product ? " · " + tierText(f.price) : ""}`).join("<br>");
+    if (isMine) info = c.factories.map((f, i) => `공장${i + 1} Lv${f.level}: ${prod(f.product)}${f.product ? " · " + tierText(f.price) : ""}`).join("<br>") + `<br>📦 재고: ${invText(c)}`;
     else info = `공장 ${c.factories.length}개 (총 레벨 ${c.factories.reduce((n, f) => n + f.level, 0)}) · 만드는 제품은 조사해야 알 수 있어요`;
     const held = m.role === "investor" ? ` · 내 주식 ${m.shares[c.id] || 0}주` : "";
     return `<div class="co ${boom(c) ? "boom" : ""}"><span class="bld">${buildingEmoji(c)}${boom(c) ? "🎉" : ""}</span>
@@ -364,8 +369,21 @@ function companyPanelHtml() {
   const secure = `<button data-act="secure" class="${m.secure ? "gray" : ""}" ${m.secure || m.coins < SECURE_COST ? "disabled" : ""}>${m.secure ? "🛡️ 비공개 생산 켜짐" : `🛡️ 비공개 생산 켜기 (${SECURE_COST}코인)`}</button>`;
   const spies = companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("");
   return `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(준비 단계)</span></h2>
-    <p class="muted">공장마다 만들 제품과 가격을 고르세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요.</p>
-    ${facs}${addBtn}${secure}<div>${spies}</div>${spyHtml(m.id)}</section>`;
+    <p class="muted">공장마다 만들 제품과 가격을 고르세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요.
+    공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.</p>
+    <div class="muted">📦 재고: ${invText(m)}</div>
+    ${facs}${addBtn}${secure}<div>${spies}</div>${spyHtml(m.id)}</section>${cardsHtml(m)}`;
+}
+
+function cardsHtml(m) {
+  const hand = m.hand || [];
+  if (!hand.length) return "";
+  const btns = hand.map((k) => {
+    const c = CARDS[k], used = m.card === k;
+    return `<div class="row"><strong>${c.icon} ${c.name}</strong> <span class="muted">${c.text}</span><br>
+      <button data-act="card" data-c="${k}" class="${used ? "gray" : ""}" ${m.card || m.coins < c.cost ? "disabled" : ""}>${used ? "사용함 ✅" : `쓰기 (${c.cost}코인)`}</button></div>`;
+  }).join("");
+  return `<section class="card"><h2>🃏 이번 턴 카드 <span class="muted">(한 장만 쓸 수 있어요, 정산 때 효과가 나와요)</span></h2>${btns}</section>`;
 }
 
 function investorPanelHtml() {
@@ -393,16 +411,19 @@ function resultHtml() {
     const rows = x.rows.map((w) => w.idle
       ? `<div class="row">공장 ${w.idx + 1} · 쉬었어요 (유지비만 나가요)</div>`
       : `<div class="row">공장 ${w.idx + 1} (Lv${w.level}) ${prod(w.product)} · ${tierText(w.tier)}<br>
-         <span class="formula">판매량 = 작은 쪽(능력 ${w.cap}, 수요 몫 ${w.share}) = <strong>${w.sold}개</strong></span><br>
-         매출 ${w.sold * w.price} − 만드는 비용 ${w.sold * w.unit}</div>`).join("");
-    return `<div class="co"><strong>${esc(c.name)}</strong>${rows}
-      <div>유지비 −${x.upkeep} → <strong class="${x.profit >= 0 ? "plus" : "minus"}">이번 턴 이익 ${sign(x.profit)}코인</strong></div>
+         <span class="formula">가진 수량 ${w.produced}(이번에 만듦)${w.carried ? ` + ${w.carried}(지난 재고)` : ""} = ${w.have}개<br>
+         판매량 = 작은 쪽(가진 수량 ${w.have}, 수요 몫 ${w.share}) = <strong>${w.sold}개</strong> · 남은 재고 ${w.left}개</span><br>
+         ${w.penalty ? `경쟁 과열로 값 ${w.base} → ${w.price}<br>` : ""}매출 ${w.sold * w.price} − 만드는 비용 ${w.produced * w.unit}</div>`).join("");
+    const extra = [x.storage ? `보관비 −${x.storage}` : "", x.refund ? `보험금 +${x.refund}` : ""].filter(Boolean).join(" · ");
+    return `<div class="co"><strong>${esc(c.name)}</strong>${x.card ? ` <span class="tag">${CARDS[x.card].icon} ${CARDS[x.card].name} 사용</span>` : ""}${rows}
+      <div>유지비 −${x.upkeep}${extra ? " · " + extra : ""} → <strong class="${x.profit >= 0 ? "plus" : "minus"}">이번 턴 이익 ${sign(x.profit)}코인</strong></div>
       <div>주가 ${x.stockFrom} → <span class="${x.stockTo >= x.stockFrom ? "up" : "down"}">${x.stockTo}</span>${x.perShare ? ` · 1주당 배당 ${x.perShare}코인` : ""}</div></div>`;
   }).join("");
   const myDiv = r.dividends[m.id] ? `<p class="plus">내가 받은 배당금 +${r.dividends[m.id]}코인 🎁</p>` : "";
   return `<section class="card"><h2>📊 결과 정산</h2>
     <p>정세 발표: ${prod(r.truth)}${r.event ? ` · 돌발: ${r.event.title}` : ""}</p>
-    <p class="formula">판매 공식 · 판매량 = 작은 쪽(생산 능력, 제품 수요 × 내 가격 몫)<br>내 가격 몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합 (저가 3 · 적정가 2 · 고가 1)</p>
+    <p class="formula">판매 공식 · 판매량 = 작은 쪽(가진 수량, 제품 수요 × 내 가격 몫)<br>내 가격 몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합 (저가 3 · 적정가 2 · 고가 1)<br>
+    같은 제품 공장이 하나 더 있을 때마다 값 −${CROWD_PENALTY} · 못 판 재고는 다음 턴으로(보관비 개당 ${INV_FEE})</p>
     ${blocks}${myDiv}</section>`;
 }
 
@@ -499,6 +520,7 @@ app.addEventListener("click", async (e) => {
     else if (act === "upgrade") send("upgrade", { i });
     else if (act === "addfac") send("addfac");
     else if (act === "secure") send("secure");
+    else if (act === "card") send("card", { c });
     else if (act === "spy") send("spy", { c });
     else if (act === "buy") send("buy", { c });
     else if (act === "sell") send("sell", { c });

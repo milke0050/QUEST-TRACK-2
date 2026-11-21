@@ -29,7 +29,7 @@ function newGame(roomName, humans) {
   const company = (id, name, uid) => ({
     id, role: "company", name, uid: uid || null, bot: !uid, coins: START_COINS,
     factories: [{ level: 1, product: null, price: "mid" }],
-    secure: false, stock: START_STOCK, lastChange: 0, log: [],
+    secure: false, stock: START_STOCK, lastChange: 0, log: [], inventory: {}, hand: [], card: null,
   });
   const seats = [];
   comp.forEach((h, k) => seats.push(company("c" + (k + 1), `${h.nickname}의 회사`, h.uid)));
@@ -57,7 +57,13 @@ function startTurn(st) {
     b: RNG() < 0.5 ? st.truth : pick(others), // 소문: 더 자주 틀림
   };
   st.event = null; st.spy = {}; st.result = null; st.news = []; st.phase = 0; st.ready = {};
-  companiesOf(st).forEach((c) => (c.secure = false));
+  companiesOf(st).forEach((c) => {
+    c.secure = false;
+    c.card = null;
+    const ids = Object.keys(CARDS);
+    const first = pick(ids);
+    c.hand = [first, pick(ids.filter((k) => k !== first))]; // 이번 턴 카드 2장
+  });
 }
 
 // ---------- 기업 행동 ----------
@@ -91,6 +97,18 @@ function toggleSecure(st, cid) {
   if (c.coins < SECURE_COST) return "코인이 모자라요.";
   addCoins(st, c, -SECURE_COST, "비공개 생산(보안)");
   c.secure = true;
+  return null;
+}
+
+// 카드: 준비 단계에서 한 장만 쓸 수 있다. 효과는 정산 때 적용된다.
+function useCard(st, cid, card) {
+  const c = seatOf(st, cid), def = CARDS[card];
+  if (need(st, 1) || !def) return "지금은 카드를 쓸 수 없어요.";
+  if (c.card) return "이번 턴에는 이미 카드를 썼어요.";
+  if (!(c.hand || []).includes(card)) return "그 카드는 없어요.";
+  if (c.coins < def.cost) return "코인이 모자라요.";
+  addCoins(st, c, -def.cost, `카드 ${def.name}`);
+  c.card = card;
   return null;
 }
 
@@ -155,11 +173,15 @@ function botPrepare(st) {
       if (f.level < 3 && c.coins > 600 && RNG() < 0.3) upgradeFactory(st, c.id, i);
     });
     c.factories.forEach((f, i) => {
-      f.product = i === 0 || RNG() < 0.5 ? ranked[0] : ranked[1];
+      let want = i === 0 || RNG() < 0.5 ? ranked[0] : ranked[1];
+      const crowded = companiesOf(st).some((o) => o.id !== c.id && o.factories.some((g) => g.product === want));
+      if (crowded && want === ranked[0] && RNG() < 0.4) want = ranked[1]; // 남들이 몰린 제품은 가끔 피한다
+      f.product = want;
       const r = RNG();
       f.price = f.level >= 2 ? (r < 0.2 ? "low" : r < 0.5 ? "mid" : "high") : r < 0.3 ? "low" : r < 0.8 ? "mid" : "high";
     });
     if (c.coins > 300 && RNG() < 0.3) toggleSecure(st, c.id);
+    if (c.coins > 300 && RNG() < 0.4) useCard(st, c.id, pick(c.hand));
   });
 }
 
@@ -205,9 +227,12 @@ function rollEvent(st) {
   }
 }
 
-// 판매 공식: 판매량 = 작은 쪽( 공장 생산 능력 , 제품 수요 × 내 가격 몫 )
-//   내 가격 몫 = 내 가격 가중치 ÷ 같은 제품을 만드는 모든 공장의 가중치 합
-//   (저가 3 · 적정가 2 · 고가 1)
+// 판매 공식: 판매량 = 작은 쪽( 가진 수량 , 제품 수요 × 내 가격 몫 )
+//   가진 수량 = 이번에 만든 개수(생산 능력) + 지난 턴에 팔리지 않고 남은 재고
+//   내 가격 몫 = 내 가격 가중치 ÷ 같은 제품을 만드는 모든 공장의 가중치 합 (저가 3 · 적정가 2 · 고가 1)
+//   (광고·방해 카드는 수요 몫을 늘리거나 줄인다)
+// 경쟁 과열: 같은 제품을 만드는 공장이 하나 더 있을 때마다 판매 가격이 내려간다.
+// 재고: 팔리지 않은 제품은 다음 턴으로 넘어간다(보관비가 든다). 만드는 비용은 만들 때 낸다.
 function settle(st) {
   const cs = companiesOf(st), ev = st.event;
   const demand = {};
@@ -215,28 +240,57 @@ function settle(st) {
   if (ev && ev.id === "niche") demand[ev.product] += NICHE_BONUS;
   const extra = ev && ev.id === "rawcost" ? 2 : 0;
 
-  const weightSum = {};
+  const weightSum = {}, crowd = {};
   cs.forEach((c) => c.factories.forEach((f) => {
-    if (f.product) weightSum[f.product] = (weightSum[f.product] || 0) + PRICES[f.price].weight;
+    if (!f.product) return;
+    weightSum[f.product] = (weightSum[f.product] || 0) + PRICES[f.price].weight;
+    crowd[f.product] = (crowd[f.product] || 0) + 1;
   }));
 
   const res = {};
   cs.forEach((c) => {
-    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, profit: 0 };
+    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, storage: 0, refund: 0, profit: 0, card: c.card || null };
+    // 카드 효과
+    const sabotaged = cs.filter((o) => o.id !== c.id && o.card === "sabotage").length;
+    const mult = (c.card === "ad" ? 1.3 : 1) * Math.pow(0.85, sabotaged);
+    const rush = c.card === "rush" ? 10 : 0;
+    const disc = c.card === "discount" ? 2 : 0;
+
+    const inv = { ...(c.inventory || {}) };
+    const carriedUsed = {}, leftovers = {};
     c.factories.forEach((f, i) => {
       let u = UPKEEP[f.level];
       if (ev && ev.id === "regulation" && f.level >= 2) u *= 2;
       r.upkeep += u;
       if (!f.product) { r.rows.push({ idx: i, level: f.level, idle: true }); return; }
       const p = PRICES[f.price];
-      const share = Math.floor((demand[f.product] * p.weight) / weightSum[f.product]);
-      const sold = Math.min(CAP[f.level], share);
-      const unit = UNIT_COST[f.level] + extra;
-      r.rows.push({ idx: i, level: f.level, product: f.product, tier: f.price, price: p.price, share, cap: CAP[f.level], sold, unit });
-      r.revenue += sold * p.price;
-      r.cost += sold * unit;
+      const share = Math.floor((demand[f.product] * p.weight * mult) / weightSum[f.product]);
+      const produced = CAP[f.level] + rush;
+      const carried = carriedUsed[f.product] ? 0 : inv[f.product] || 0; // 남은 재고는 첫 공장이 맡아 판다
+      carriedUsed[f.product] = true;
+      const have = produced + carried;
+      const sold = Math.min(have, share);
+      leftovers[f.product] = (leftovers[f.product] || 0) + (have - sold);
+      const penalty = Math.min(CROWD_MAX, (crowd[f.product] - 1) * CROWD_PENALTY);
+      const price = Math.max(CROWD_MIN_PRICE, p.price - penalty);
+      const unit = Math.max(1, UNIT_COST[f.level] + extra - disc);
+      r.rows.push({ idx: i, level: f.level, product: f.product, tier: f.price, base: p.price, price, penalty: p.price - price, share, produced, carried, have, sold, left: have - sold, unit });
+      r.revenue += sold * price;
+      r.cost += produced * unit;
     });
-    r.profit = r.revenue - r.cost - r.upkeep;
+    // 새 재고: 이번에 만든 제품은 남은 만큼, 안 만든 제품은 그대로. 한도를 넘으면 버린다.
+    const next = {};
+    Object.keys(inv).forEach((k) => { if (!(k in leftovers)) next[k] = inv[k]; });
+    Object.keys(leftovers).forEach((k) => (next[k] = leftovers[k]));
+    let kept = 0;
+    Object.keys(next).forEach((k) => {
+      next[k] = Math.min(INV_MAX, next[k]);
+      if (next[k] <= 0) delete next[k]; else kept += next[k];
+    });
+    c.inventory = next;
+    r.storage = kept * INV_FEE;
+    r.profit = r.revenue - r.cost - r.upkeep - r.storage;
+    if (c.card === "insurance" && r.profit < 0) { r.refund = Math.floor(-r.profit * 0.7); r.profit += r.refund; }
     res[c.id] = r;
   });
 
@@ -290,6 +344,7 @@ function applyAction(st, uid, a) {
     case "upgrade": if (isCo && Number.isInteger(a.i)) upgradeFactory(st, s.id, a.i); break;
     case "addfac": if (isCo) addFactory(st, s.id); break;
     case "secure": if (isCo) toggleSecure(st, s.id); break;
+    case "card": if (isCo && CARDS[a.c]) useCard(st, s.id, a.c); break;
     case "spy": if (validCo) spyOn(st, s.id, cid); break;
     case "buy": if (isInv && validCo) buyShare(st, s.id, cid); break;
     case "sell": if (isInv && validCo) sellShare(st, s.id, cid); break;
@@ -319,5 +374,5 @@ function finalScores(st) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
+  module.exports = { newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, useCard, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
 }

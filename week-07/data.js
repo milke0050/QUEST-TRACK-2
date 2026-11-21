@@ -20,15 +20,15 @@ const PRICES = {
   high: { label: "고가", price: 17, weight: 1 }, // 적게 팔리지만 이익이 커요
 };
 
-const UNIT_COST = [0, 8, 6, 4]; // 공장 레벨별 제품 1개 만드는 비용
+const UNIT_COST = [0, 5, 4, 3]; // 공장 레벨별 제품 1개 만드는 비용
 const UPKEEP = [0, 10, 30, 60]; // 공장 레벨별 턴마다 내는 유지비
-const CAP = [0, 25, 35, 45]; // 공장 레벨별 한 턴에 팔 수 있는 최대 개수
+const CAP = [0, 20, 28, 36]; // 공장 레벨별 한 턴에 만드는 개수(생산 능력)
 const UPGRADE_COST = { 1: 200, 2: 300 }; // 현재 레벨 -> 올리는 값
 const MAX_SLOTS = 3;
 const NEW_SLOT_COST = 200;
 
-const DEMAND_MAIN = 100; // 정세에 맞는 제품 수요
-const DEMAND_BASE = 20; // 나머지 제품 수요
+const DEMAND_MAIN = 120; // 정세에 맞는 제품 수요
+const DEMAND_BASE = 30; // 나머지 제품 수요
 const NICHE_BONUS = 60;
 const SPY_COST = 30;
 const SECURE_COST = 40;
@@ -53,10 +53,26 @@ const BOT_COMPANY_NAMES = ["햇살상회", "푸른공방", "바람상점", "별�
 const BOT_INVESTOR_NAMES = ["투자봇 가", "투자봇 나", "투자봇 다", "투자봇 라"];
 
 // 주식 균형 조절 값 (투자자가 너무 유리하면 여기 숫자를 고친다)
-const STOCK_PCT_DIV = 1000; // 이익 ÷ 이 값 = 주가가 움직이는 비율 (클수록 주가가 덜 움직임)
+const STOCK_PCT_DIV = 700; // 이익 ÷ 이 값 = 주가가 움직이는 비율 (클수록 주가가 덜 움직임)
 const STOCK_UP_MAX = 0.25; // 한 턴에 주가가 오르는 최대 비율
 const STOCK_DOWN_MAX = 0.25; // 한 턴에 주가가 내리는 최대 비율
-const DIVIDEND_RATE = 0.2; // 이익 중 배당으로 나가는 비율
+const DIVIDEND_RATE = 0.3; // 이익 중 배당으로 나가는 비율
 const TRADE_FEE = 0.05; // 사고팔 때 내는 수수료 비율 (0.05 = 5%)
 const BUY_PAYS_COMPANY = false; // true 면 주식 살 때 낸 코인이 그 회사로 들어간다
 const OWNER_SHARES_COUNT = false; // true 면 기업의 점수에 안 팔린 주식 값도 더한다
+
+// 경쟁 과열 · 재고 · 특수 카드
+const CROWD_PENALTY = 2; // 같은 제품을 만드는 공장이 하나 더 있을 때마다 판매 가격이 이만큼 내려간다
+const CROWD_MAX = 6; // 가격이 내려가는 최대치
+const CROWD_MIN_PRICE = 5; // 내려가도 이 가격 밑으로는 안 간다
+const INV_MAX = 30; // 제품 하나당 남겨 둘 수 있는 재고
+const INV_FEE = 1; // 재고 1개당 턴마다 내는 보관비
+
+// 턴마다 기업은 카드 2장을 받고, 준비 단계에서 한 장까지 쓸 수 있다.
+const CARDS = {
+  ad: { icon: "📢", name: "광고", cost: 50, text: "내 제품 수요 몫 +30%" },
+  sabotage: { icon: "💣", name: "방해 공작", cost: 60, text: "경쟁 회사들의 수요 몫 −15%" },
+  rush: { icon: "⚡", name: "특급 생산", cost: 20, text: "모든 공장이 10개 더 만들어요" },
+  discount: { icon: "🏷️", name: "원가 할인", cost: 40, text: "만드는 비용 −2" },
+  insurance: { icon: "🧯", name: "손해 보험", cost: 30, text: "적자면 손실의 70%를 돌려받아요" },
+};
