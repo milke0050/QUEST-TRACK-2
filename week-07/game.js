@@ -45,7 +45,7 @@ function newGame(roomName, humans) {
   inv.forEach((h, k) => seats.push(investor("i" + (k + 1), h.nickname, h.uid)));
   for (let k = inv.length; k < MIN_PER_ROLE; k++) seats.push(investor("i" + (k + 1), BOT_INVESTOR_NAMES[k]));
 
-  const st = { version: 2, room: { name: roomName }, seats, turn: 1, phase: 0, over: false, ready: {}, applied: [] };
+  const st = { version: 2, build: BUILD, room: { name: roomName }, seats, turn: 1, phase: 0, over: false, ready: {}, applied: [] };
   startTurn(st);
   return st;
 }

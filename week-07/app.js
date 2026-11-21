@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js";
+import { Store } from "./storage.js?v=8";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -499,7 +499,10 @@ function render() {
   }
   if (state.over) { app.innerHTML = overHtml(); return; }
   const panel = m.role === "company" ? companyPanelHtml() : investorPanelHtml();
-  app.innerHTML = `${toast}${trackHtml()}${readyHtml()}${newsHtml()}
+  // 방을 시작한 사람과 화면 버전이 다르면(옛 파일이 남아 있으면) 알려 준다.
+  const oldWarn = state.build !== BUILD
+    ? `<div class="toast">⚠️ 이 방은 다른 버전(${esc(state.build || "옛")})으로 시작됐고, 내 화면은 버전 ${BUILD}이에요. Ctrl+F5 로 새로고침해 보세요.</div>` : "";
+  app.innerHTML = `${oldWarn}${toast}${trackHtml()}${readyHtml()}${newsHtml()}
     <div class="cols" style="margin-top:12px">
       <div>${hintsHtml()}${eventHtml()}${panel}${resultHtml()}</div>
       <div>${walletHtml()}${companiesHtml()}${seatsHtml()}</div>
