@@ -1,0 +1,43 @@
+* { box-sizing: border-box; }
+body { font-family: system-ui, "Malgun Gothic", sans-serif; margin: 0; background: #f4f6fb; color: #222; line-height: 1.5; overflow-wrap: anywhere; }
+header { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding: 10px 16px; background: #1f3a68; color: #fff; }
+header h1 { font-size: 1.1rem; margin: 0; }
+#login-slot { padding: 4px 12px; border: 1px dashed #9fb4d9; border-radius: 8px; font-size: .9rem; color: #cfdcf5; }
+main { max-width: 1000px; margin: 0 auto; padding: 12px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; align-items: start; }
+.card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px #0002; }
+.card h2 { font-size: 1rem; margin: 0 0 8px; }
+.muted { color: #777; font-size: .9rem; }
+.coins { font-size: 1.8rem; font-weight: bold; color: #b8860b; }
+button { font: inherit; padding: 8px 12px; margin: 4px 4px 0 0; border: 0; border-radius: 8px; background: #2c6bd6; color: #fff; cursor: pointer; }
+button:disabled { background: #b9c2d3; cursor: not-allowed; }
+button.gray { background: #777; }
+button.green { background: #1a8a3a; }
+button.big { width: 100%; font-size: 1.05rem; padding: 12px; }
+button.small { padding: 4px 8px; font-size: .85rem; }
+input[type=text], select { font: inherit; padding: 6px 8px; border: 1px solid #bbb; border-radius: 8px; max-width: 100%; }
+.track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.step { padding: 4px 10px; border-radius: 999px; background: #e3e8f2; font-size: .85rem; }
+.step.done { background: #c9d8f4; }
+.step.now { background: #ffb703; font-weight: bold; }
+.hint { padding: 10px; border-radius: 10px; background: #eef4ff; margin-bottom: 8px; }
+.hint.rumor { background: #fff4e0; }
+.event { padding: 10px; border-radius: 10px; background: #ffe3e3; border: 2px solid #e57373; animation: pop .5s; }
+.event.none { background: #eef7ee; border-color: #9ccc9c; animation: none; }
+.fac, .co, .row { padding: 8px 0; border-bottom: 1px solid #eee; }
+.fac:last-child, .co:last-child, .row:last-child { border-bottom: 0; }
+.bld { font-size: 2.2rem; display: inline-block; }
+.boom .bld { animation: grow 1s ease; }
+.boom { background: #fff8d6; border-radius: 8px; }
+.up { color: #c0392b; font-weight: bold; } /* 주가 상승은 빨강(한국식) */
+.down { color: #1a5fd6; font-weight: bold; }
+.plus { color: #1a8a3a; } .minus { color: #c0392b; }
+.tag { font-size: .75rem; padding: 1px 6px; border-radius: 6px; background: #e3e8f2; }
+.tag.me { background: #ffb703; }
+ul.plain { list-style: none; padding: 0; margin: 6px 0 0; }
+ul.plain li { padding: 4px 0; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.toast { background: #fff3cd; border: 1px solid #e0c36a; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; }
+.formula { font-size: .9rem; background: #f0f3fa; padding: 6px 10px; border-radius: 8px; }
+.slot-empty { min-height: 0; } /* 방 들어가기 자리: 비워 둠 */
+@keyframes pop { from { transform: scale(.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes grow { 0% { transform: scale(.6); } 60% { transform: scale(1.4); } 100% { transform: scale(1); } }
