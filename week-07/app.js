@@ -1,7 +1,7 @@
 // 화면 코드. 규칙은 game.js, 숫자는 data.js, 로그인·저장은 storage.js 에 있다.
 // 여러 명이 함께 하는 방법: 방장의 브라우저가 판을 진행하고 방(Firestore)에 적는다.
 // 다른 사람은 방을 실시간으로 보고, 자기 행동을 '행동 쪽지'로 보낸다. 방장이 확인해서 판에 적용한다.
-import { Store } from "./storage.js?v=8";
+import { Store } from "./storage.js?v=9";
 
 let auth = { status: "loading", uid: null, nickname: "" }; // loading | out | needNick | in | error
 let roomCode = null; // 지금 들어가 있는 방 코드
@@ -370,7 +370,7 @@ function companyPanelHtml() {
   const spies = companiesOf(state).filter((c) => c.id !== m.id).map((c) => spyBtn(m, c)).join("");
   return `<section class="card"><h2>🏭 내 회사 · ${esc(m.name)} <span class="muted">(준비 단계)</span></h2>
     <p class="muted">공장마다 만들 제품과 가격을 고르세요. 저가는 많이 팔리고, 고가는 한 개당 이익이 커요.
-    공장 레벨(품질)이 높으면 손님이 더 와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.</p>
+    같은 제품을 사려는 손님(수요)은 정해져 있어서 경쟁 공장끼리 나눠 가져요. 값이 싸고 공장 레벨(품질)이 높을수록 더 많이 가져와요. 공장은 능력만큼 만들어 놓고 팔아요. 못 판 건 재고로 남아 다음 턴에 팔 수 있지만 보관비가 들어요. 같은 제품을 만드는 공장이 많으면 값이 내려가요.</p>
     <div class="muted">📦 재고: ${invText(m)}</div>
     ${facs}${addBtn}${secure}<div>${spies}</div>${spyHtml(m.id)}</section>${cardsHtml(m)}`;
 }
@@ -403,64 +403,41 @@ function investorPanelHtml() {
   return msg ? `<section class="card"><h2>📈 투자자</h2><p>${msg}</p></section>` : "";
 }
 
+// 가져온 몫 막대그래프(그림): 시장 전체 판매 중 회사마다 몇 %를 가져왔는지
+function shareChartHtml(r, m) {
+  const rows = companiesOf(state).map((c) => ({ c, sold: r.companies[c.id].sold }))
+    .sort((x, y) => y.sold - x.sold);
+  const total = r.totalSold || 0, W = 340, rowH = 34, barX = 112, barW = 160, H = rows.length * rowH + 6;
+  const body = rows.map(({ c, sold }, i) => {
+    const pct = total ? Math.round((sold / total) * 100) : 0, y = 4 + i * rowH;
+    const name = c.name.length > 9 ? c.name.slice(0, 8) + "…" : c.name;
+    const color = c.id === m.id ? "#ffb703" : "#2c6bd6";
+    return `<text x="0" y="${y + 18}" font-size="12" fill="currentColor">${esc(name)}</text>
+      <rect x="${barX}" y="${y + 4}" width="${barW}" height="20" rx="4" fill="#e3e8f2"/>
+      <rect x="${barX}" y="${y + 4}" width="${Math.round((barW * pct) / 100)}" height="20" rx="4" fill="${color}"/>
+      <text x="${barX + barW + 8}" y="${y + 19}" font-size="13" font-weight="bold" fill="currentColor">${pct}%</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="회사별로 가져온 수요 몫 막대그래프">${body}</svg>`;
+}
+
 function resultHtml() {
   if (state.phase !== 4 || !state.result) return "";
   const r = state.result, m = me();
-  const cs = companiesOf(state);
-  const total = r.totalCustomers || 0;
-  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
   const money = (n) => `<span class="${n >= 0 ? "plus" : "minus"}">${sign(n)}코인</span>`;
+  const mine = r.gain[m.id];
 
-  // 1) 내가 얼마 벌었나 + 같은 역할끼리 비교
-  const peers = state.seats.filter((s) => s.role === m.role).sort((x, y) => r.gain[y.id] - r.gain[x.id]);
-  const rank = peers.findIndex((s) => s.id === m.id) + 1;
-  const best = peers[0], mine = r.gain[m.id];
-  const who = m.role === "company" ? "기업" : "투자자";
-  const vs = rank === 1
-    ? `${who} ${peers.length}명 중 <strong>1위</strong>예요! 🎉`
-    : `${who} ${peers.length}명 중 <strong>${rank}위</strong> · 1위 ${esc(best.name)}보다 ${r.gain[best.id] - mine}코인 적어요`;
-  let sub = "";
-  if (m.role === "company") {
-    const x = r.companies[m.id];
-    sub = `<div>손님 ${total}명 중 내 회사가 <strong>${x.customers}명(${pct(x.customers)}%)</strong>을 데려왔어요. 그중 ${x.sold}개를 팔았어요.</div>`;
-  } else if (r.dividends[m.id]) {
-    sub = `<div>받은 배당금 +${r.dividends[m.id]}코인 🎁</div>`;
-  }
-  const top = `<section class="card"><h2>📊 이번 턴 결과</h2>
-    <p class="muted">정세 발표: ${prod(r.truth)}${r.event ? ` · 돌발: ${r.event.title}` : ""}</p>
-    <div class="muted">${m.role === "company" ? "이번 턴 번 돈" : "이번 턴 늘어난 내 자산"}</div>
-    <div class="bigmoney">${money(mine)}</div>
-    <div>${vs}</div>${sub}</section>`;
-
-  // 2) 회사끼리 비교: 손님 몫 막대 + 번 돈
-  const order = [...cs].sort((x, y) => r.companies[y.id].profit - r.companies[x.id].profit);
-  const rows = order.map((c) => {
-    const x = r.companies[c.id], p = pct(x.customers);
-    return `<div class="row"><strong>${esc(c.name)}</strong> ${c.id === m.id ? '<span class="tag me">내 회사</span>' : ""}
-      <div class="bar"><span style="width:${p}%"></span></div>
-      <div class="barlabel">손님 ${x.customers}명 (${p}%) · 번 돈 ${money(x.profit)}</div></div>`;
+  const stocks = companiesOf(state).map((c) => {
+    const x = r.companies[c.id], d = x.stockTo - x.stockFrom;
+    const arrow = d > 0 ? `<span class="up">▲${d}</span>` : d < 0 ? `<span class="down">▼${-d}</span>` : "-";
+    return `<li><span>${esc(c.name)}${c.id === m.id ? ' <span class="tag me">내 회사</span>' : ""}</span><span>${x.stockFrom} → <strong>${x.stockTo}</strong> ${arrow}</span></li>`;
   }).join("");
-  const compare = `<section class="card"><h2>🏙️ 회사끼리 비교</h2>
-    <p class="muted">손님 수는 정해져 있고, 가격이 싸고 품질(공장 레벨)이 좋을수록 더 많이 데려와요.</p>${rows}</section>`;
 
-  // 3) 자세한 계산은 접어 둔다
-  const detail = cs.map((c) => {
-    const x = r.companies[c.id];
-    const frows = x.rows.map((w) => w.idle
-      ? `<div class="row">공장 ${w.idx + 1} · 쉬었어요 (유지비만 나가요)</div>`
-      : `<div class="row">공장 ${w.idx + 1} (Lv${w.level}) ${prod(w.product)} · ${tierText(w.tier)}<br>
-         손님 ${w.share}명 · 가진 물건 ${w.have}개(만든 ${w.produced}${w.carried ? ` + 재고 ${w.carried}` : ""}) → <strong>${w.sold}개 판매</strong> · 남은 재고 ${w.left}개<br>
-         ${w.penalty ? `경쟁 과열로 값 ${w.base} → ${w.price}<br>` : ""}매출 ${w.sold * w.price} − 만드는 비용 ${w.produced * w.unit}</div>`).join("");
-    const extra = [x.storage ? `보관비 −${x.storage}` : "", x.refund ? `보험금 +${x.refund}` : ""].filter(Boolean).join(" · ");
-    return `<div class="co"><strong>${esc(c.name)}</strong>${x.card ? ` <span class="tag">${CARDS[x.card].icon} ${CARDS[x.card].name} 사용</span>` : ""}${frows}
-      <div>유지비 −${x.upkeep}${extra ? " · " + extra : ""} → 이익 ${money(x.profit)}</div>
-      <div>주가 ${x.stockFrom} → <span class="${x.stockTo >= x.stockFrom ? "up" : "down"}">${x.stockTo}</span>${x.perShare ? ` · 1주당 배당 ${x.perShare}코인` : ""}</div></div>`;
-  }).join("");
-  const more = `<section class="card"><details><summary>자세한 계산 보기</summary>
-    <p class="formula">손님 수 × 내 몫 = 내 손님 (몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합, 가중치 = 가격(저가 3 · 적정가 2 · 고가 1) × 품질(Lv1 1 · Lv2 1.4 · Lv3 1.8))<br>
-    판 개수 = 작은 쪽(가진 물건, 내 손님) · 같은 제품 공장이 하나 더 있으면 값 −${CROWD_PENALTY} · 못 판 재고는 다음 턴으로(보관비 개당 ${INV_FEE})</p>${detail}</details></section>`;
-
-  return top + compare + more;
+  return `<section class="card"><h2>📊 이번 턴 결과</h2>
+      <div class="muted">내가 번 순수익${m.role === "investor" ? " (배당과 주식 값 변화 포함)" : ""}</div>
+      <div class="bigmoney">${money(mine)}</div></section>
+    <section class="card"><h2>🥧 수요 몫: 경쟁해서 가져온 비율</h2>
+      <p class="muted">같은 제품을 사려는 손님은 정해져 있어서, 경쟁하는 회사끼리 나눠 가졌어요.</p>${shareChartHtml(r, m)}</section>
+    <section class="card"><h2>📈 주가</h2><ul class="plain">${stocks}</ul></section>`;
 }
 
 function newsHtml() {

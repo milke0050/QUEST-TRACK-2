@@ -230,13 +230,40 @@ function rollEvent(st) {
   }
 }
 
-// 판매 공식: 제품마다 손님 수(수요)는 정해져 있고, 그 손님을 가격과 품질(공장 레벨)로 나눠 갖는다.
-//   내 손님 = 손님 수 × 내 몫,  내 몫 = 내 가중치 ÷ 같은 제품 공장들의 가중치 합
-//   가중치 = 가격 가중치(저가 3 · 적정가 2 · 고가 1) × 품질(공장 레벨)
-//   판 개수 = 작은 쪽( 가진 수량 , 내 손님 )  (가진 수량 = 이번에 만든 개수 + 지난 재고)
-//   (광고·방해 카드는 내 손님을 늘리거나 줄인다)
+// 판매 규칙: 제품마다 수요(손님 수)는 정해져 있고, 같은 제품을 만드는 공장들이 그 수요를 함께 나눠 쓴다.
+//   예) 수요 40개인데 A 가 40개, B 가 20개 만들었으면 둘이 경합해서 전체 40개만 팔린다.
+//   수요는 가중치(가격 x 품질)대로 나누고, 물건이 모자란 공장 몫은 다른 공장이 이어서 가져간다.
+//   가중치 = 가격 가중치(저가 3 · 적정가 2 · 고가 1) x 품질(공장 레벨), 광고·방해 카드는 가중치를 바꾼다.
 // 경쟁 과열: 같은 제품을 만드는 공장이 하나 더 있을 때마다 판매 가격이 내려간다.
 // 재고: 팔리지 않은 제품은 다음 턴으로 넘어간다(보관비가 든다). 만드는 비용은 만들 때 낸다.
+
+// total 개의 수요를 items([{w: 가중치, cap: 가진 물건 수}])에 나눠 주고, 각자 판 개수를 돌려준다.
+function allocateDemand(total, items) {
+  const out = items.map(() => 0);
+  // 전체 판매는 수요와 물건 전체 중 작은 쪽
+  let left = Math.min(Math.floor(total), items.reduce((n, x) => n + x.cap, 0));
+  let active = items.map((_, i) => i);
+  while (left > 0 && active.length) {
+    const wsum = active.reduce((n, i) => n + items[i].w, 0);
+    const raw = (i) => (left * items[i].w) / wsum;
+    const capped = active.filter((i) => items[i].cap - out[i] <= raw(i) + 1e-9);
+    if (!capped.length) {
+      // 모두 물건이 넉넉하면 가중치대로 나누고, 남는 1~2개는 소수점이 큰 순서로 준다.
+      let given = 0;
+      const fr = active.map((i) => { const f = Math.floor(raw(i)); out[i] += f; given += f; return { i, f: raw(i) - f }; });
+      fr.sort((x, y) => y.f - x.f);
+      let rest = left - given;
+      for (const x of fr) { if (rest <= 0) break; if (out[x.i] < items[x.i].cap) { out[x.i]++; rest--; } }
+      left = 0;
+      break;
+    }
+    // 물건이 모자란 공장은 가진 만큼만 가져가고, 남은 수요는 다른 공장이 이어서 가져간다.
+    capped.forEach((i) => { const take = items[i].cap - out[i]; out[i] += take; left -= take; });
+    active = active.filter((i) => !capped.includes(i));
+  }
+  return out;
+}
+
 function settle(st) {
   const cs = companiesOf(st), ev = st.event;
   const demand = {};
@@ -244,48 +271,60 @@ function settle(st) {
   if (ev && ev.id === "niche") demand[ev.product] += NICHE_BONUS;
   const extra = ev && ev.id === "rawcost" ? 2 : 0;
 
-  const weightSum = {}, crowd = {};
-  cs.forEach((c) => c.factories.forEach((f) => {
-    if (!f.product) return;
-    weightSum[f.product] = (weightSum[f.product] || 0) + PRICES[f.price].weight * QUALITY[f.level];
-    crowd[f.product] = (crowd[f.product] || 0) + 1;
-  }));
-
-  const res = {};
+  // 1) 공장마다 가진 물건과 가중치를 정리한다
+  const crowd = {};
+  cs.forEach((c) => c.factories.forEach((f) => { if (f.product) crowd[f.product] = (crowd[f.product] || 0) + 1; }));
+  const res = {}, entries = [];
   cs.forEach((c) => {
-    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, storage: 0, refund: 0, profit: 0, customers: 0, sold: 0, card: c.card || null };
-    // 카드 효과
+    const r = { rows: [], revenue: 0, cost: 0, upkeep: 0, storage: 0, refund: 0, profit: 0, sold: 0, card: c.card || null };
+    res[c.id] = r;
     const sabotaged = cs.filter((o) => o.id !== c.id && o.card === "sabotage").length;
     const mult = (c.card === "ad" ? 1.3 : 1) * Math.pow(0.85, sabotaged);
     const rush = c.card === "rush" ? 10 : 0;
     const disc = c.card === "discount" ? 2 : 0;
-
-    const inv = { ...(c.inventory || {}) };
-    const carriedUsed = {}, leftovers = {};
+    const inv = c.inventory || {}, carriedUsed = {};
     c.factories.forEach((f, i) => {
       let u = UPKEEP[f.level];
       if (ev && ev.id === "regulation" && f.level >= 2) u *= 2;
       r.upkeep += u;
       if (!f.product) { r.rows.push({ idx: i, level: f.level, idle: true }); return; }
       const p = PRICES[f.price];
-      const share = Math.floor((demand[f.product] * p.weight * QUALITY[f.level] * mult) / weightSum[f.product]); // 내 손님 수
       const produced = CAP[f.level] + rush;
       const carried = carriedUsed[f.product] ? 0 : inv[f.product] || 0; // 남은 재고는 첫 공장이 맡아 판다
       carriedUsed[f.product] = true;
-      const have = produced + carried;
-      const sold = Math.min(have, share);
-      leftovers[f.product] = (leftovers[f.product] || 0) + (have - sold);
       const penalty = Math.min(CROWD_MAX, (crowd[f.product] - 1) * CROWD_PENALTY);
-      const price = Math.max(CROWD_MIN_PRICE, p.price - penalty);
-      const unit = Math.max(1, UNIT_COST[f.level] + extra - disc);
-      r.rows.push({ idx: i, level: f.level, product: f.product, tier: f.price, base: p.price, price, penalty: p.price - price, share, produced, carried, have, sold, left: have - sold, unit });
-      r.revenue += sold * price;
-      r.cost += produced * unit;
-      r.customers += share;
-      r.sold += sold;
+      const row = {
+        idx: i, level: f.level, product: f.product, tier: f.price, base: p.price,
+        price: Math.max(CROWD_MIN_PRICE, p.price - penalty),
+        produced, carried, have: produced + carried, sold: 0, left: 0,
+        unit: Math.max(1, UNIT_COST[f.level] + extra - disc),
+      };
+      row.penalty = row.base - row.price;
+      r.rows.push(row);
+      entries.push({ row, w: p.weight * QUALITY[f.level] * mult });
     });
-    // 새 재고: 이번에 만든 제품은 남은 만큼, 안 만든 제품은 그대로. 한도를 넘으면 버린다.
-    const next = {};
+  });
+
+  // 2) 제품마다 수요를 공장들이 함께 나눠 쓴다
+  Object.keys(PRODUCTS).forEach((prod) => {
+    const group = entries.filter((e) => e.row.product === prod);
+    if (!group.length) return;
+    const sold = allocateDemand(demand[prod], group.map((e) => ({ w: e.w, cap: e.row.have })));
+    group.forEach((e, k) => { e.row.sold = sold[k]; e.row.left = e.row.have - sold[k]; });
+  });
+
+  // 3) 회사별로 매출·비용·재고를 계산한다
+  cs.forEach((c) => {
+    const r = res[c.id];
+    const leftovers = {};
+    r.rows.forEach((w) => {
+      if (w.idle) return;
+      r.revenue += w.sold * w.price;
+      r.cost += w.produced * w.unit;
+      r.sold += w.sold;
+      leftovers[w.product] = (leftovers[w.product] || 0) + w.left;
+    });
+    const inv = c.inventory || {}, next = {};
     Object.keys(inv).forEach((k) => { if (!(k in leftovers)) next[k] = inv[k]; });
     Object.keys(leftovers).forEach((k) => (next[k] = leftovers[k]));
     let kept = 0;
@@ -297,7 +336,6 @@ function settle(st) {
     r.storage = kept * INV_FEE;
     r.profit = r.revenue - r.cost - r.upkeep - r.storage;
     if (c.card === "insurance" && r.profit < 0) { r.refund = Math.floor(-r.profit * 0.7); r.profit += r.refund; }
-    res[c.id] = r;
   });
 
   const dividends = {};
@@ -320,13 +358,13 @@ function settle(st) {
     c.lastChange = c.stock - old;
     r.stockFrom = old; r.stockTo = c.stock;
   });
-  // 이번 턴 얼마 벌었나: 기업은 정산 이익, 투자자는 자산(코인+주식 값)이 늘어난 만큼
+  // 이번 턴 번 순수익: 기업은 정산 이익, 투자자는 자산(코인+주식 값)이 늘어난 만큼
   const gain = {};
   st.seats.forEach((x) => {
     gain[x.id] = x.role === "company" ? res[x.id].profit : worthOf(st, x) - (x.worthStart === undefined ? worthOf(st, x) : x.worthStart);
   });
-  const totalCustomers = cs.reduce((n, c) => n + res[c.id].customers, 0);
-  st.result = { truth: st.truth, event: ev, companies: res, dividends, gain, totalCustomers };
+  const totalSold = cs.reduce((n, c) => n + res[c.id].sold, 0);
+  st.result = { truth: st.truth, event: ev, companies: res, dividends, gain, totalSold };
 }
 
 function advance(st) {
@@ -386,5 +424,5 @@ function finalScores(st) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, useCard, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
+  module.exports = { allocateDemand, newGame, advance, applyAction, tryAdvance, setFactory, upgradeFactory, addFactory, toggleSecure, useCard, spyOn, buyShare, sellShare, finalScores, settle, seatOf, setRng: (f) => (RNG = f) };
 }
